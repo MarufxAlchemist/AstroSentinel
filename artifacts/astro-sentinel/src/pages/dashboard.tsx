@@ -1,0 +1,303 @@
+import React, { useState, useMemo } from "react";
+import { useAstroWebSocket } from "@/hooks/useAstroWebSocket";
+import { useListEvents, useGetEventStats } from "@workspace/api-client-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import type { AstroEvent } from "@workspace/api-client-react/src/generated/api.schemas";
+import { formatMicrosecondDate, formatLatency } from "@/lib/formatters";
+import { useScienceMode } from "@/lib/ScienceModeContext";
+import { SciencePanel } from "@/components/SciencePanel";
+
+function typeColor(type: string) {
+  switch (type) {
+    case "GRB": return { bg: "bg-orange-500/15", border: "border-orange-600/60", text: "text-orange-800 dark:text-amber-400", dot: "bg-orange-600 dark:bg-amber-500" };
+    case "GW":  return { bg: "bg-green-500/15",  border: "border-green-600/60",  text: "text-green-800  dark:text-emerald-400", dot: "bg-green-700  dark:bg-emerald-500" };
+    case "FRB": return { bg: "bg-amber-400/15",  border: "border-amber-600/60",  text: "text-amber-900 dark:text-yellow-300",  dot: "bg-amber-600  dark:bg-yellow-400" };
+    default:    return { bg: "bg-blue-500/15",   border: "border-blue-600/50",   text: "text-blue-800   dark:text-blue-400",   dot: "bg-blue-600" };
+  }
+}
+
+function typeLabel(type: string) {
+  switch (type) {
+    case "GRB": return "Gamma-ray burst";
+    case "GW":  return "Gravitational wave";
+    case "FRB": return "Fast radio burst";
+    default:    return type;
+  }
+}
+
+function TimelineBar({ events }: { events: AstroEvent[] }) {
+  const days: { label: string; date: Date }[] = [];
+  const now = new Date();
+  for (let i = 7; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    days.push({
+      label: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
+      date: d,
+    });
+  }
+  const today = days[days.length - 1];
+  const countByDay: Record<string, number> = {};
+  events.forEach(e => {
+    const d = e.detectionTime.slice(0, 10);
+    countByDay[d] = (countByDay[d] || 0) + 1;
+  });
+  return (
+    <div className="flex items-center gap-0 h-9 bg-[hsl(var(--sidebar))] border-b border-border px-3 shrink-0 overflow-x-auto scrollbar-thin">
+      <div className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground mr-3 shrink-0">
+        <div className="w-4 h-4 rounded-full border border-muted-foreground flex items-center justify-center">
+          <div className="w-1.5 h-1.5 rounded-full bg-muted-foreground" />
+        </div>
+        <span>{days[0].label}</span>
+      </div>
+      <div className="flex items-center flex-1 min-w-0">
+        {days.slice(1).map((day) => {
+          const isToday = day.label === today.label;
+          const count = countByDay[day.label] || 0;
+          return (
+            <React.Fragment key={day.label}>
+              <div className="flex-1 h-px bg-border min-w-4" />
+              <div className="flex flex-col items-center gap-0.5 shrink-0">
+                <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${isToday ? "border-primary bg-primary/20" : "border-border bg-card hover:border-muted-foreground"}`}>
+                  {count > 0 && <div className={`w-2 h-2 rounded-full ${isToday ? "bg-primary" : "bg-muted-foreground"}`} />}
+                </div>
+                <span className={`text-[9px] font-mono whitespace-nowrap ${isToday ? "text-primary" : "text-muted-foreground"}`}>{day.label.slice(5)}</span>
+              </div>
+            </React.Fragment>
+          );
+        })}
+      </div>
+      <div className="flex items-center gap-1.5 text-xs font-mono text-primary ml-3 shrink-0">
+        <span>{today.label}</span>
+        <div className="w-4 h-4 rounded-full border border-primary bg-primary/20 flex items-center justify-center">
+          <div className="w-1.5 h-1.5 rounded-full bg-primary" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SidebarItem({ event, selected, isNew, onClick, scienceMode }: { event: AstroEvent; selected: boolean; isNew: boolean; onClick: () => void; scienceMode: boolean; }) {
+  const c = typeColor(event.eventType);
+  return (
+    <div onClick={onClick} className={`flex items-center gap-2.5 px-2.5 cursor-pointer transition-all border-l-2 ${scienceMode ? "py-2.5" : "py-2"} ${selected ? `bg-primary/10 border-l-primary` : `border-l-transparent hover:bg-accent/50`} ${isNew ? "animate-in fade-in slide-in-from-top-2 duration-400" : ""}`}>
+      <div className={`w-9 h-9 rounded-md border ${c.border} ${c.bg} flex items-center justify-center shrink-0`}>
+        <div className={`w-3 h-3 rounded-full ${c.dot} shadow-[0_0_6px_currentColor]`} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="font-mono text-xs font-bold text-foreground truncate">{event.eventId}</div>
+        <div className={`text-[10px] ${c.text} truncate`}>{typeLabel(event.eventType)}</div>
+        {scienceMode && (
+          <div className="mt-0.5 grid grid-cols-2 gap-x-1 text-[9px] font-mono text-muted-foreground">
+            <span>RA {event.ra.toFixed(1)}°</span>
+            <span>Dec {event.dec.toFixed(1)}°</span>
+            <span>SNR {event.snr.toFixed(1)}σ</span>
+            <span>FAR {event.far.toExponential(1)}</span>
+          </div>
+        )}
+      </div>
+      {isNew && <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse shrink-0" />}
+    </div>
+  );
+}
+
+function EventBrief({ event }: { event: AstroEvent }) {
+  const c = typeColor(event.eventType);
+  const dateStr = formatMicrosecondDate(event.detectionTime);
+  const { scienceMode } = useScienceMode();
+  return (
+    <div className="flex gap-3 p-2.5 border-b border-border bg-[hsl(var(--sidebar))] shrink-0">
+      <div className={`w-11 h-11 rounded-lg border ${c.border} ${c.bg} flex items-center justify-center shrink-0`}>
+        <div className={`w-4 h-4 rounded-full ${c.dot}`} />
+      </div>
+      <div className="shrink-0">
+        <div className="font-mono text-sm font-bold text-foreground">{event.eventId}</div>
+        <div className={`text-xs ${c.text}`}>{typeLabel(event.eventType)}</div>
+        <button className={`mt-1 px-2.5 py-0.5 text-[10px] font-mono rounded border ${c.border} ${c.text} ${c.bg} hover:opacity-80 transition-opacity`}>
+          Zoom
+        </button>
+      </div>
+      <div className={`flex-1 grid gap-x-4 gap-y-0.5 text-[11px] font-mono ${scienceMode ? "grid-cols-3" : "grid-cols-2"}`}>
+        <div><span className="text-muted-foreground">Date [UTC]: </span><span className="text-foreground">{dateStr.slice(0, 19).replace("T", " ")}</span></div>
+        <div><span className="text-muted-foreground">Right ascension [deg]: </span><span className="text-foreground">{event.ra.toFixed(2)}</span></div>
+        <div><span className="text-muted-foreground">Declination [deg]: </span><span className="text-foreground">{event.dec.toFixed(2)}</span></div>
+        <div><span className="text-muted-foreground">observatory: </span><span className="text-foreground">{event.observatory}</span></div>
+        <div><span className="text-muted-foreground">instrument: </span><span className="text-foreground">{event.observatory}/{event.eventType}</span></div>
+        <div><span className="text-muted-foreground">SNR: </span><span className="text-foreground">{event.snr.toFixed(1)} σ</span></div>
+        {scienceMode && <>
+          <div><span className="text-muted-foreground">FAR: </span><span className="text-foreground">{event.far.toExponential(3)} Hz</span></div>
+          <div><span className="text-muted-foreground">Err radius: </span><span className="text-foreground">{event.errorRadius.toFixed(2)}'</span></div>
+          <div><span className="text-muted-foreground">Latency: </span><span className="text-foreground">{formatLatency(event.latencyUs)}</span></div>
+          <div><span className="text-muted-foreground">Gal. lon: </span><span className="text-foreground">{event.galLon.toFixed(2)}°</span></div>
+          <div><span className="text-muted-foreground">Gal. lat: </span><span className="text-foreground">{event.galLat.toFixed(2)}°</span></div>
+          <div><span className="text-muted-foreground">Sun dist: </span><span className="text-foreground">{event.sunDistance.toFixed(1)}°</span></div>
+          {event.fluence != null && <div><span className="text-muted-foreground">Fluence: </span><span className="text-foreground">{event.fluence.toExponential(3)} erg/cm²</span></div>}
+          {event.dm != null && <div><span className="text-muted-foreground">DM: </span><span className="text-foreground">{event.dm.toFixed(1)} pc/cm³</span></div>}
+        </>}
+      </div>
+    </div>
+  );
+}
+
+function generateSummary(event: AstroEvent): string {
+  const dateStr = formatMicrosecondDate(event.detectionTime).slice(0, 19).replace("T", " ");
+  const type = typeLabel(event.eventType);
+  const raDec = `(RA: ${event.ra.toFixed(2)}°, Dec: ${event.dec.toFixed(2)}°)`;
+  const err = event.errorRadius.toFixed(2);
+  const snr = event.snr.toFixed(1);
+  const far = event.far.toExponential(2);
+  let body = `On ${dateStr} UTC, the ${event.observatory} instrument detected a ${type} (${event.eventType}) named ${event.eventId}. This event was observed at coordinates ${raDec} with a localization uncertainty of approximately ${err} arcminutes.`;
+  if (event.eventType === "GRB" && event.fluence != null) {
+    body += ` The measured fluence of this burst was ${event.fluence.toExponential(3)} erg/cm², placing it among the detected gamma-ray transients in this observation window. The signal-to-noise ratio of ${snr}σ and false alarm rate of ${far} Hz indicate a statistically significant detection.`;
+    body += ` Gamma-ray bursts of this nature are thought to originate from the collapse of massive stars or the merger of compact binary systems, releasing enormous energy on cosmological scales. Follow-up multi-wavelength observations are recommended to constrain the afterglow and host environment.`;
+  } else if (event.eventType === "GW") {
+    body += ` The gravitational wave signal exhibited a signal-to-noise ratio of ${snr}σ across the detector network. The false alarm rate of ${far} Hz corresponds to a highly significant astrophysical event candidate.`;
+    body += ` Gravitational wave detections of this class are consistent with compact binary coalescence, representing a key target for multi-messenger follow-up. Electromagnetic counterpart searches in the localization region are strongly encouraged.`;
+  } else if (event.eventType === "FRB" && event.dm != null) {
+    body += ` The dispersion measure for this event was calculated to be ${event.dm.toFixed(1)} pc/cm³, which helps in estimating the distance and intergalactic electron content along the line of sight. FRBs are brief but intense bursts of radio waves, and this initial alert provides key insights into their mysterious origins.`;
+    body += ` Fast Radio Bursts like this one are important in the field of multi-messenger astronomy as they may hold clues about the extreme conditions in distant galaxies. This particular FRB was detected with a latency of ${formatLatency(event.latencyUs)}, contributing to the growing catalog of these enigmatic astrophysical phenomena.`;
+  }
+  return body;
+}
+
+function TeamDetails() {
+  return (
+    <div className="rounded border border-border bg-card p-3 mb-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Team details</div>
+        <div className="text-[9px] font-mono text-emerald-600 dark:text-emerald-400">Active</div>
+      </div>
+      <div className="grid grid-cols-2 gap-1.5 text-[10px] font-mono">
+        <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">PI</span><span className="text-foreground">active</span></div>
+        <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Co-I</span><span className="text-foreground">active</span></div>
+        <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Observer</span><span className="text-foreground">active</span></div>
+        <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Analyst</span><span className="text-foreground">active</span></div>
+      </div>
+    </div>
+  );
+}
+
+function RightPanel({ event }: { event: AstroEvent | null }) {
+  if (!event) {
+    return <div className="flex-1 flex flex-col items-center justify-center p-6 text-center"><div className="text-muted-foreground text-sm">Select an event from the list to view details</div></div>;
+  }
+  const summary = generateSummary(event);
+  const externalLinks = [
+    { name: "GCN", desc: "Follow link for further information.", icon: "📡" },
+    { name: "ALADIN", desc: "Displays event in an interactive sky atlas", icon: "🌌" },
+    { name: "ESASky", desc: "Displays event in an interactive sky atlas", icon: "🔭" },
+    { name: "TNS", desc: "Transient Name Server", icon: "🌟" },
+  ];
+  return (
+    <div className="flex flex-col h-full">
+      <ScrollArea className="flex-1 scrollbar-thin">
+        <div className="p-3">
+          <TeamDetails />
+          <h3 className="text-xs font-semibold text-foreground mb-2 uppercase tracking-wider">Selected source:</h3>
+          <p className="text-[11px] text-muted-foreground leading-relaxed font-sans">{summary}</p>
+          <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] font-mono">
+            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Gal. Lon</span><span className="text-foreground">{event.galLon.toFixed(2)}°</span></div>
+            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Gal. Lat</span><span className="text-foreground">{event.galLat.toFixed(2)}°</span></div>
+            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Sun dist.</span><span className="text-foreground">{event.sunDistance.toFixed(1)}°</span></div>
+            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Moon dist.</span><span className="text-foreground">{event.moonDistance.toFixed(1)}°</span></div>
+            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">FAR</span><span className="text-foreground">{event.far.toExponential(2)} Hz</span></div>
+            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Err radius</span><span className="text-foreground">{event.errorRadius.toFixed(2)}'</span></div>
+            {event.fluence != null && (<div className="flex justify-between border-b border-border/50 pb-0.5 col-span-2"><span className="text-muted-foreground">Fluence</span><span className="text-foreground">{event.fluence.toExponential(3)} erg/cm²</span></div>)}
+            {event.dm != null && (<div className="flex justify-between border-b border-border/50 pb-0.5 col-span-2"><span className="text-muted-foreground">DM</span><span className="text-foreground">{event.dm.toFixed(1)} pc/cm³</span></div>)}
+            <div className="flex justify-between border-b border-border/50 pb-0.5 col-span-2"><span className="text-muted-foreground">Latency</span><span className="text-foreground">{formatLatency(event.latencyUs)}</span></div>
+          </div>
+        </div>
+      </ScrollArea>
+      <div className="border-t border-border p-2 shrink-0">
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">External information:</span>
+          <div className="flex gap-1">{[0,1,2,3].map(i => <div key={i} className={`w-1.5 h-1.5 rounded-full ${i === 0 ? 'bg-primary' : 'bg-border'}`} />)}</div>
+        </div>
+        <div className="grid grid-cols-2 gap-1.5">{externalLinks.map(link => (<div key={link.name} className="flex gap-2 p-2 rounded border border-border bg-card hover:border-muted-foreground hover:bg-accent/30 transition-colors cursor-pointer"><span className="text-base leading-none shrink-0">{link.icon}</span><div><div className="text-[11px] font-semibold text-foreground">{link.name}</div><div className="text-[9px] text-muted-foreground leading-tight">{link.desc}</div></div></div>))}</div>
+      </div>
+    </div>
+  );
+}
+
+function StatsStrip() {
+  const { data: stats } = useGetEventStats({ query: { refetchInterval: 10000, queryKey: ["event-stats"] } });
+  const { scienceMode } = useScienceMode();
+  if (!stats) return null;
+  return (
+    <div className="flex items-center gap-4 px-3 h-7 bg-[hsl(var(--navbar-bg))] border-b border-border shrink-0 text-[11px] font-mono text-muted-foreground overflow-x-auto scrollbar-thin">
+      <span>Total: <span className="text-foreground font-bold">{stats.totalEvents.toLocaleString()}</span></span>
+      <span className="text-border">|</span>
+      <span>Rate: <span className="text-primary font-bold">{stats.recentRate.toFixed(1)}/hr</span></span>
+      <span className="text-border">|</span>
+      <span>GRB: <span className="text-orange-800 dark:text-amber-400 font-bold">{stats.byType.GRB}</span></span>
+      <span>GW: <span className="text-green-800 dark:text-emerald-400 font-bold">{stats.byType.GW}</span></span>
+      <span>FRB: <span className="text-amber-900 dark:text-yellow-300 font-bold">{stats.byType.FRB}</span></span>
+      {scienceMode && <>
+        <span className="text-border">|</span>
+        <span className="text-violet-400 font-semibold tracking-wider">RESEARCHER MODE</span>
+        <span className="text-border">|</span>
+        {(stats.byObservatory ?? []).map((item: { observatory: string; count: number }) => (<span key={item.observatory}>{item.observatory}: <span className="text-foreground font-bold">{item.count}</span></span>))}
+      </>}
+    </div>
+  );
+}
+
+export default function Dashboard() {
+  const { scienceMode } = useScienceMode();
+  const { events: liveEvents } = useAstroWebSocket();
+  const { data: initialData } = useListEvents({ limit: 100 });
+  const [selectedEvent, setSelectedEvent] = useState<AstroEvent | null>(null);
+  const allEvents = useMemo(() => {
+    const map = new Map<string, AstroEvent>();
+    initialData?.events.forEach(e => map.set(e.eventId, e));
+    liveEvents.forEach(e => map.set(e.eventId, e));
+    return Array.from(map.values()).sort((a, b) => new Date(b.detectionTime).getTime() - new Date(a.detectionTime).getTime());
+  }, [liveEvents, initialData]);
+  const liveIds = useMemo(() => new Set(liveEvents.map(e => e.id)), [liveEvents]);
+  const SIDEBAR_LIMIT = 50;
+  const sidebarEvents = useMemo(() => allEvents.slice(0, SIDEBAR_LIMIT), [allEvents]);
+  React.useEffect(() => {
+    if (!selectedEvent && allEvents.length > 0) {
+      setSelectedEvent(allEvents[0]);
+    }
+  }, [allEvents, selectedEvent]);
+  return (
+    <div className="flex flex-col flex-1 overflow-hidden">
+      <StatsStrip />
+      <TimelineBar events={allEvents} />
+      <div className="flex flex-1 overflow-hidden">
+        <div className="w-52 shrink-0 border-r border-border flex flex-col overflow-hidden bg-[hsl(var(--sidebar))]">
+          <div className="px-2.5 py-1.5 border-b border-border shrink-0 flex items-center justify-between">
+            <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Live events</span>
+            <div className="flex items-center gap-1.5">
+              {allEvents.length > SIDEBAR_LIMIT && (<span className="text-[9px] font-mono text-muted-foreground/60" title={`${allEvents.length} total archived in database`}>of {allEvents.length}</span>)}
+              <span className="text-[10px] font-mono text-primary">{Math.min(allEvents.length, SIDEBAR_LIMIT)}</span>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto scrollbar-thin">
+            {sidebarEvents.map(event => (<SidebarItem key={event.id} event={event} selected={selectedEvent?.id === event.id} isNew={liveIds.has(event.id)} onClick={() => setSelectedEvent(event)} scienceMode={scienceMode} />))}
+            {sidebarEvents.length === 0 && (<div className="p-4 text-center text-[11px] text-muted-foreground font-mono">Awaiting signals…</div>)}
+            {allEvents.length > SIDEBAR_LIMIT && (<div className="px-3 py-2 text-center text-[9px] text-muted-foreground/50 font-mono border-t border-border">+{allEvents.length - SIDEBAR_LIMIT} archived → Event Archive</div>)}
+          </div>
+        </div>
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {selectedEvent && <EventBrief event={selectedEvent} />}
+          <div className="flex-1 min-h-0 p-2 bg-[hsl(var(--sidebar))] overflow-hidden">
+            <SciencePanel event={selectedEvent} />
+          </div>
+        </div>
+        <div className="w-72 shrink-0 border-l border-border flex flex-col overflow-hidden bg-[hsl(var(--sidebar))]">
+          <ScrollArea className="flex-1 scrollbar-thin">
+            <div className="p-3">
+              <TeamDetails />
+              <h3 className="text-xs font-semibold text-foreground mb-2 uppercase tracking-wider">Selected source:</h3>
+              <p className="text-[11px] text-muted-foreground leading-relaxed font-sans">
+                {selectedEvent ? generateSummary(selectedEvent) : "Select an event from the list to view details"}
+              </p>
+            </div>
+          </ScrollArea>
+        </div>
+      </div>
+    </div>
+  );
+}

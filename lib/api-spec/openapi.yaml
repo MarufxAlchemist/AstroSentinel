@@ -1,0 +1,229 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: AstroSentinel API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: events
+    description: Astronomical event operations
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /events:
+    get:
+      operationId: listEvents
+      tags: [events]
+      summary: List latest astronomical events
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: eventType
+          in: query
+          schema:
+            type: string
+            enum: [GRB, GW, FRB]
+        - name: observatory
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventListResponse"
+
+  /events/stats:
+    get:
+      operationId: getEventStats
+      tags: [events]
+      summary: Get aggregate stats about events
+      responses:
+        "200":
+          description: Event statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventStats"
+
+  /events/{id}:
+    get:
+      operationId: getEvent
+      tags: [events]
+      summary: Get a single event by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Event detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AstroEvent"
+        "404":
+          description: Event not found
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
+    AstroEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        eventId:
+          type: string
+          description: Human-readable event ID (e.g. GRB260503A)
+        eventType:
+          type: string
+          enum: [GRB, GW, FRB]
+        observatory:
+          type: string
+        detectionTime:
+          type: string
+          description: ISO timestamp with microsecond precision
+        ra:
+          type: number
+          description: Right Ascension in degrees
+        dec:
+          type: number
+          description: Declination in degrees
+        errorRadius:
+          type: number
+          description: Error radius in arcminutes
+        snr:
+          type: number
+          description: Signal-to-noise ratio
+        far:
+          type: number
+          description: False alarm rate (Hz)
+        fluence:
+          type: number
+          nullable: true
+          description: Fluence (erg/cm²), GRB only
+        dm:
+          type: number
+          nullable: true
+          description: Dispersion measure (pc/cm³), FRB only
+        galLat:
+          type: number
+          description: Galactic latitude
+        galLon:
+          type: number
+          description: Galactic longitude
+        sunDistance:
+          type: number
+          description: Angular distance from Sun (degrees)
+        moonDistance:
+          type: number
+          description: Angular distance from Moon (degrees)
+        latencyUs:
+          type: integer
+          description: System latency in microseconds
+        createdAt:
+          type: string
+      required:
+        - id
+        - eventId
+        - eventType
+        - observatory
+        - detectionTime
+        - ra
+        - dec
+        - errorRadius
+        - snr
+        - far
+        - galLat
+        - galLon
+        - sunDistance
+        - moonDistance
+        - latencyUs
+        - createdAt
+
+    EventListResponse:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/AstroEvent"
+        total:
+          type: integer
+      required:
+        - events
+        - total
+
+    EventStats:
+      type: object
+      properties:
+        totalEvents:
+          type: integer
+        byType:
+          type: object
+          properties:
+            GRB:
+              type: integer
+            GW:
+              type: integer
+            FRB:
+              type: integer
+          required: [GRB, GW, FRB]
+        byObservatory:
+          type: array
+          items:
+            type: object
+            properties:
+              observatory:
+                type: string
+              count:
+                type: integer
+            required: [observatory, count]
+        recentRate:
+          type: number
+          description: Events per hour in the last hour
+        latestEvent:
+          $ref: "#/components/schemas/AstroEvent"
+          nullable: true
+      required:
+        - totalEvents
+        - byType
+        - byObservatory
+        - recentRate
