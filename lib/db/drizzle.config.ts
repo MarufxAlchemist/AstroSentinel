@@ -11,4 +11,9 @@ export default defineConfig({
   dbCredentials: {
     url: process.env.DATABASE_URL,
   },
+  // Include all custom schemas in migrations
+  schemaFilter: ["public", "tenant", "identity", "catalog", "core", "alerts", "metrics", "audit"],
+  out: path.join(__dirname, "./migrations"),
+  verbose: true,
+  strict: true,
 });

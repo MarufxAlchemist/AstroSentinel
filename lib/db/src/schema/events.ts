@@ -1,28 +1,290 @@
-import { pgTable, text, serial, real, integer, timestamp } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
-import { z } from "zod/v4";
+import {
+  pgSchema,
+  bigserial,
+  uuid,
+  text,
+  boolean,
+  smallint,
+  integer,
+  real,
+  doublePrecision,
+  jsonb,
+  timestamp,
+  customType,
+} from "drizzle-orm/pg-core";
+import { relations } from "drizzle-orm";
+import { labs } from "./tenant.js";
+import { observatories } from "./catalog.js";
+import { users } from "./identity.js";
 
-export const eventsTable = pgTable("events", {
-  id: serial("id").primaryKey(),
-  eventId: text("event_id").notNull().unique(),
-  eventType: text("event_type").notNull(), // GRB, GW, FRB
-  observatory: text("observatory").notNull(),
-  detectionTime: text("detection_time").notNull(), // ISO with microseconds
-  ra: real("ra").notNull(),
-  dec: real("dec").notNull(),
-  errorRadius: real("error_radius").notNull(),
-  snr: real("snr").notNull(),
-  far: real("far").notNull(),
-  fluence: real("fluence"),
-  dm: real("dm"),
-  galLat: real("gal_lat").notNull(),
-  galLon: real("gal_lon").notNull(),
-  sunDistance: real("sun_distance").notNull(),
-  moonDistance: real("moon_distance").notNull(),
-  latencyUs: integer("latency_us").notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+export const coreSchema = pgSchema("core");
+
+// ─── Custom types ────────────────────────────────────────────────────────────
+
+/**
+ * pgvector vector type — stored as FLOAT4[] internally.
+ * HNSW index is defined via raw migration SQL.
+ */
+const vector = customType<{ data: number[]; driverData: string; config: { dimensions: number } }>({
+  dataType(config) {
+    return `vector(${config?.dimensions ?? 1536})`;
+  },
+  toDriver(value: number[]): string {
+    return `[${value.join(",")}]`;
+  },
+  fromDriver(value: string): number[] {
+    return value
+      .replace(/^\[/, "")
+      .replace(/\]$/, "")
+      .split(",")
+      .map(Number);
+  },
 });
 
-export const insertEventSchema = createInsertSchema(eventsTable).omit({ id: true, createdAt: true });
-export type InsertEvent = z.infer<typeof insertEventSchema>;
-export type AstroEvent = typeof eventsTable.$inferSelect;
+/**
+ * PostGIS geography(POINT, 4326) — spatial column for cone search.
+ * GiST index is defined via raw migration SQL.
+ */
+const geographyPoint = customType<{ data: string }>({
+  dataType() {
+    return "geography(POINT, 4326)";
+  },
+});
+
+/**
+ * ltree — hierarchical label path for localization lineage.
+ * Requires the ltree extension (CREATE EXTENSION IF NOT EXISTS ltree).
+ */
+const ltree = customType<{ data: string }>({
+  dataType() {
+    return "ltree";
+  },
+});
+
+// ─── core.events ─────────────────────────────────────────────────────────────
+
+export const events = coreSchema.table("events", {
+  id:                   bigserial("id", { mode: "bigint" }).primaryKey(),
+  labId:                uuid("lab_id").notNull().references(() => labs.id),
+  eventId:              text("event_id").notNull(),
+  eventType:            text("event_type").notNull(),
+  detectionTime:        timestamp("detection_time", { withTimezone: true }).notNull(),
+  ra:                   doublePrecision("ra").notNull(),
+  dec:                  doublePrecision("dec").notNull(),
+  // skyPosition computed via trigger in migration: ST_MakePoint(ra, dec)::geography
+  skyPosition:          geographyPoint("sky_position"),
+  errorRadius:          doublePrecision("error_radius").notNull(),
+  snr:                  doublePrecision("snr").notNull(),
+  far:                  doublePrecision("far").notNull(),
+  // GRB-specific
+  fluence:              doublePrecision("fluence"),
+  fluenceBand:          text("fluence_band"),
+  t90:                  doublePrecision("t90"),
+  // FRB-specific
+  dm:                   doublePrecision("dm"),
+  peakFlux:             doublePrecision("peak_flux"),
+  // GW-specific
+  chirpMass:            doublePrecision("chirp_mass"),
+  luminosityDistance:   doublePrecision("luminosity_distance"),
+  // Celestial geometry
+  galLat:               doublePrecision("gal_lat").notNull(),
+  galLon:               doublePrecision("gal_lon").notNull(),
+  sunDistance:          doublePrecision("sun_distance").notNull(),
+  moonDistance:         doublePrecision("moon_distance").notNull(),
+  redshift:             doublePrecision("redshift"),
+  // System fields
+  latencyUs:            bigserial("latency_us", { mode: "bigint" }).notNull(),
+  sourceCatalogId:      text("source_catalog_id"),
+  gcnUrl:               text("gcn_url"),
+  status:               text("status").notNull().default("preliminary"),
+  ingestedBy:           uuid("ingested_by").references(() => users.id),
+  createdAt:            timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:            timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type AstroEvent = typeof events.$inferSelect;
+export type InsertAstroEvent = typeof events.$inferInsert;
+
+// ─── core.event_detections (TimescaleDB hypertable) ──────────────────────────
+
+export const eventDetections = coreSchema.table("event_detections", {
+  id:              bigserial("id", { mode: "bigint" }).primaryKey(),
+  eventId:         bigserial("event_id", { mode: "bigint" }).notNull()
+                     .references(() => events.id),
+  labId:           uuid("lab_id").notNull().references(() => labs.id),
+  observatoryId:   bigserial("observatory_id", { mode: "bigint" }).notNull()
+                     .references(() => observatories.id),
+  detectedAt:      timestamp("detected_at", { withTimezone: true }).notNull(),  // Hypertable key
+  ra:              doublePrecision("ra").notNull(),
+  dec:             doublePrecision("dec").notNull(),
+  errorRadius:     doublePrecision("error_radius").notNull(),
+  snr:             doublePrecision("snr").notNull(),
+  far:             doublePrecision("far").notNull(),
+  pipelineVersion: text("pipeline_version"),
+  rawPayload:      jsonb("raw_payload").notNull().$type<Record<string, unknown>>().default({}),
+  createdAt:       timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type EventDetection = typeof eventDetections.$inferSelect;
+export type InsertEventDetection = typeof eventDetections.$inferInsert;
+
+// ─── core.event_localizations ────────────────────────────────────────────────
+
+export const eventLocalizations = coreSchema.table("event_localizations", {
+  id:          bigserial("id", { mode: "bigint" }).primaryKey(),
+  eventId:     bigserial("event_id", { mode: "bigint" }).notNull()
+                 .references(() => events.id),
+  labId:       uuid("lab_id").notNull().references(() => labs.id),
+  method:      text("method").notNull(),
+  version:     integer("version").notNull().default(1),
+  fitsUrl:     text("fits_url").notNull(),
+  nside:       integer("nside"),
+  area50Deg2:  real("area_50_deg2"),
+  area90Deg2:  real("area_90_deg2"),
+  vol50Mpc3:   doublePrecision("vol_50_mpc3"),
+  vol90Mpc3:   doublePrecision("vol_90_mpc3"),
+  hasNsProb:   real("has_ns_prob"),
+  lineage:     ltree("lineage"),
+  isLatest:    boolean("is_latest").notNull().default(true),
+  createdAt:   timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type EventLocalization = typeof eventLocalizations.$inferSelect;
+export type InsertEventLocalization = typeof eventLocalizations.$inferInsert;
+
+// ─── core.event_classifications ──────────────────────────────────────────────
+
+export const eventClassifications = coreSchema.table("event_classifications", {
+  id:               bigserial("id", { mode: "bigint" }).primaryKey(),
+  eventId:          bigserial("event_id", { mode: "bigint" }).notNull()
+                      .references(() => events.id),
+  labId:            uuid("lab_id").notNull().references(() => labs.id),
+  classifier:       text("classifier").notNull().default("gstlal"),
+  version:          integer("version").notNull().default(1),
+  probBns:          real("prob_bns"),
+  probNsbh:         real("prob_nsbh"),
+  probBbh:          real("prob_bbh"),
+  probMassGap:      real("prob_mass_gap"),
+  probTerrestrial:  real("prob_terrestrial"),
+  hasNs:            boolean("has_ns"),
+  hasRemnant:       boolean("has_remnant"),
+  isLatest:         boolean("is_latest").notNull().default(true),
+  createdAt:        timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type EventClassification = typeof eventClassifications.$inferSelect;
+export type InsertEventClassification = typeof eventClassifications.$inferInsert;
+
+// ─── core.event_followup_requests ────────────────────────────────────────────
+
+export const eventFollowupRequests = coreSchema.table("event_followup_requests", {
+  id:             bigserial("id", { mode: "bigint" }).primaryKey(),
+  labId:          uuid("lab_id").notNull().references(() => labs.id),
+  eventId:        bigserial("event_id", { mode: "bigint" }).notNull()
+                    .references(() => events.id),
+  observatoryId:  bigserial("observatory_id", { mode: "bigint" }).notNull()
+                    .references(() => observatories.id),
+  requestedBy:    uuid("requested_by").notNull().references(() => users.id),
+  priority:       text("priority").notNull().default("normal"),
+  status:         text("status").notNull().default("pending"),
+  exposureTimeS:  real("exposure_time_s"),
+  filterBand:     text("filter_band"),
+  notes:          text("notes"),
+  responseNotes:  text("response_notes"),
+  requestedAt:    timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+  respondedAt:    timestamp("responded_at", { withTimezone: true }),
+  expiresAt:      timestamp("expires_at", { withTimezone: true }),
+});
+
+export type EventFollowupRequest = typeof eventFollowupRequests.$inferSelect;
+export type InsertEventFollowupRequest = typeof eventFollowupRequests.$inferInsert;
+
+// ─── core.event_annotations ──────────────────────────────────────────────────
+
+export const eventAnnotations = coreSchema.table("event_annotations", {
+  id:        bigserial("id", { mode: "bigint" }).primaryKey(),
+  labId:     uuid("lab_id").notNull().references(() => labs.id),
+  eventId:   bigserial("event_id", { mode: "bigint" }).notNull()
+               .references(() => events.id),
+  userId:    uuid("user_id").notNull().references(() => users.id),
+  parentId:  bigserial("parent_id", { mode: "bigint" })
+               .references((): typeof eventAnnotations => eventAnnotations.id),
+  content:   text("content").notNull(),
+  tags:      text("tags").array().notNull().default([]),
+  isPinned:  boolean("is_pinned").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+});
+
+export type EventAnnotation = typeof eventAnnotations.$inferSelect;
+export type InsertEventAnnotation = typeof eventAnnotations.$inferInsert;
+
+// ─── core.event_embeddings (pgvector) ────────────────────────────────────────
+
+export const eventEmbeddings = coreSchema.table("event_embeddings", {
+  id:             bigserial("id", { mode: "bigint" }).primaryKey(),
+  eventId:        bigserial("event_id", { mode: "bigint" }).notNull().unique()
+                    .references(() => events.id),
+  labId:          uuid("lab_id").notNull().references(() => labs.id),
+  modelName:      text("model_name").notNull(),
+  modelVersion:   text("model_version").notNull(),
+  // 1536-dim vector — HNSW index defined via raw migration SQL:
+  //   CREATE INDEX ON core.event_embeddings USING hnsw (embedding vector_cosine_ops)
+  //   WITH (m = 16, ef_construction = 64);
+  embedding:      vector("embedding", { dimensions: 1536 }).notNull(),
+  inputFeatures:  text("input_features").array().notNull().default([]),
+  createdAt:      timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type EventEmbedding = typeof eventEmbeddings.$inferSelect;
+export type InsertEventEmbedding = typeof eventEmbeddings.$inferInsert;
+
+// ─── Relations ───────────────────────────────────────────────────────────────
+
+export const eventsRelations = relations(events, ({ one, many }) => ({
+  lab:               one(labs, { fields: [events.labId], references: [labs.id] }),
+  ingestedByUser:    one(users, { fields: [events.ingestedBy], references: [users.id] }),
+  detections:        many(eventDetections),
+  localizations:     many(eventLocalizations),
+  classifications:   many(eventClassifications),
+  followupRequests:  many(eventFollowupRequests),
+  annotations:       many(eventAnnotations),
+  embedding:         many(eventEmbeddings),
+}));
+
+export const eventDetectionsRelations = relations(eventDetections, ({ one }) => ({
+  event:      one(events, { fields: [eventDetections.eventId], references: [events.id] }),
+  lab:        one(labs, { fields: [eventDetections.labId], references: [labs.id] }),
+  observatory: one(observatories, { fields: [eventDetections.observatoryId], references: [observatories.id] }),
+}));
+
+export const eventLocalizationsRelations = relations(eventLocalizations, ({ one }) => ({
+  event: one(events, { fields: [eventLocalizations.eventId], references: [events.id] }),
+  lab:   one(labs, { fields: [eventLocalizations.labId], references: [labs.id] }),
+}));
+
+export const eventClassificationsRelations = relations(eventClassifications, ({ one }) => ({
+  event: one(events, { fields: [eventClassifications.eventId], references: [events.id] }),
+  lab:   one(labs, { fields: [eventClassifications.labId], references: [labs.id] }),
+}));
+
+export const eventFollowupRequestsRelations = relations(eventFollowupRequests, ({ one }) => ({
+  event:        one(events, { fields: [eventFollowupRequests.eventId], references: [events.id] }),
+  lab:          one(labs, { fields: [eventFollowupRequests.labId], references: [labs.id] }),
+  observatory:  one(observatories, { fields: [eventFollowupRequests.observatoryId], references: [observatories.id] }),
+  requestedByUser: one(users, { fields: [eventFollowupRequests.requestedBy], references: [users.id] }),
+}));
+
+export const eventAnnotationsRelations = relations(eventAnnotations, ({ one, many }) => ({
+  event:   one(events, { fields: [eventAnnotations.eventId], references: [events.id] }),
+  lab:     one(labs, { fields: [eventAnnotations.labId], references: [labs.id] }),
+  user:    one(users, { fields: [eventAnnotations.userId], references: [users.id] }),
+  parent:  one(eventAnnotations, { fields: [eventAnnotations.parentId], references: [eventAnnotations.id] }),
+  replies: many(eventAnnotations),
+}));
+
+export const eventEmbeddingsRelations = relations(eventEmbeddings, ({ one }) => ({
+  event: one(events, { fields: [eventEmbeddings.eventId], references: [events.id] }),
+  lab:   one(labs, { fields: [eventEmbeddings.labId], references: [labs.id] }),
+}));
