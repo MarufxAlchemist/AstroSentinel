@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 import asyncio
 import json
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 
 from app.websocket.manager import manager
 from app.gcn.background_listener import start_listener
@@ -40,21 +40,34 @@ def health():
 
 
 @app.websocket("/api/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    v: str = Query(default="1"),
+    since: str | None = Query(default=None),
+):
     """
     Primary WebSocket endpoint.
 
-    On connect:
-      • Accepts the connection
-      • Sends a connection_ack message (via manager.connect)
+    Query params
+    ------------
+    v     : schema version the client supports ("1")
+    since : ISO-8601 timestamp — if present the client wants history replay
+            after connection_ack (it will send a history_request message)
 
-    Message loop:
-      • Accepts client text frames (ping / pong protocol)
-      • Responds to { "type": "ping" } with { "type": "pong" }
-      • Ignores unknown client messages gracefully
+    Server → Client message flow
+    ----------------------------
+    1. connection_ack  (on connect)
+    2. alert           (each GCN event, broadcast)
+    3. heartbeat       (every 30 s, broadcast)
+    4. history_start / history_event × N / history_end  (on history_request)
+    5. pong            (on ping)
+    6. error           (on bad client message)
 
-    On disconnect:
-      • Removes client from active_connections
+    Client → Server messages handled
+    ---------------------------------
+    ping             → pong
+    history_request  → history_start / history_event / history_end
+    ack              → logged (no-op in v1; reserved for guaranteed delivery)
     """
     await manager.connect(websocket)
 
@@ -64,14 +77,58 @@ async def websocket_endpoint(websocket: WebSocket):
 
             try:
                 msg = json.loads(raw)
-                if msg.get("type") == "ping":
-                    await websocket.send_json({
-                        "type":           "pong",
-                        "schema_version": "1",
-                        "sent_at":        msg.get("sent_at"),
-                    })
             except (json.JSONDecodeError, AttributeError):
-                pass  # non-JSON frames are silently ignored
+                await manager.send_error(
+                    websocket,
+                    code="INVALID_MESSAGE",
+                    detail="Frame is not valid JSON",
+                )
+                continue
+
+            msg_type = msg.get("type")
+
+            # ── ping ─────────────────────────────────────────────────────────
+            if msg_type == "ping":
+                await manager.send_pong(
+                    websocket,
+                    echo_sent_at=msg.get("sent_at", ""),
+                )
+
+            # ── history_request ───────────────────────────────────────────────
+            elif msg_type == "history_request":
+                req_since = msg.get("since")
+                if not req_since:
+                    await manager.send_error(
+                        websocket,
+                        code="INVALID_MESSAGE",
+                        detail="history_request must include a 'since' field",
+                        request_id=msg.get("request_id"),
+                    )
+                    continue
+
+                await manager.send_history(
+                    websocket,
+                    request_id=msg.get("request_id", ""),
+                    since=req_since,
+                    last_sequence=msg.get("last_sequence"),
+                )
+
+            # ── ack ───────────────────────────────────────────────────────────
+            elif msg_type == "ack":
+                # Guaranteed-delivery hook — reserved for v1, no-op for now.
+                # The event_id and sequence are available for future logging.
+                print(
+                    f"[ws] Client ack: event_id={msg.get('event_id')} "
+                    f"seq={msg.get('sequence')}"
+                )
+
+            # ── unknown ───────────────────────────────────────────────────────
+            elif msg_type is not None:
+                await manager.send_error(
+                    websocket,
+                    code="UNKNOWN_TYPE",
+                    detail=f"Unrecognized message type: {msg_type!r}",
+                )
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)

@@ -61,13 +61,6 @@ async def _kafka_loop() -> None:
         await asyncio.sleep(0)
 
 
-# ---------------------------------------------------------------------------
-# Heartbeat loop
-# ---------------------------------------------------------------------------
-
-_last_alert_at: str | None = None
-
-
 async def _heartbeat_loop() -> None:
     """Send a heartbeat to all clients every HEARTBEAT_INTERVAL_S seconds."""
     print(f"[heartbeat] Sending every {HEARTBEAT_INTERVAL_S}s")
@@ -75,9 +68,10 @@ async def _heartbeat_loop() -> None:
     while True:
         await asyncio.sleep(HEARTBEAT_INTERVAL_S)
         try:
-            await manager.send_heartbeat(last_alert_at=_last_alert_at)
+            await manager.send_heartbeat()
         except Exception as exc:
             print(f"[heartbeat] send error: {exc}")
+
 
 
 # ---------------------------------------------------------------------------

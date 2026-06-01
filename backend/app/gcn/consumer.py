@@ -1,6 +1,7 @@
 import os
 import json
 import uuid
+import itertools
 
 from datetime import datetime, timezone
 
@@ -9,7 +10,7 @@ from gcn_kafka import Consumer
 
 from app.gcn.topics import TOPICS, get_topic_meta
 from app.gcn.normalizer import normalize
-from app.websocket.manager import manager
+from app.websocket.manager import manager, alert_buffer
 
 load_dotenv()
 
@@ -24,6 +25,11 @@ consumer = Consumer(
 consumer.subscribe(TOPICS)
 
 SCHEMA_VERSION = "1"
+
+# Monotonically increasing counter — resets only on server restart.
+# The frontend stores the last seen sequence and sends it back in
+# history_request so the server can deduplicate replayed events.
+_sequence_counter = itertools.count(start=1)
 
 
 # ---------------------------------------------------------------------------
@@ -122,11 +128,22 @@ async def process_alert(message) -> None:
             "type":           "alert",
             "schema_version": SCHEMA_VERSION,
             "sent_at":        datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            "sequence":       next(_sequence_counter),
             "event":          event,
             "notification":   notification,
         }
 
+        # Push to ring buffer BEFORE broadcast so any reconnecting client
+        # that joins during broadcast already has this event available.
+        alert_buffer.push(envelope)
+
         await manager.broadcast(envelope)
+
+        # Let the manager track last_alert_at and last_sequence for heartbeats.
+        manager.record_alert(
+            sent_at=envelope["sent_at"],
+            sequence=envelope["sequence"],
+        )
 
         print(
             f"[consumer] Broadcasted alert "
