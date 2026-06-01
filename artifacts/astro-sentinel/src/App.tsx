@@ -15,6 +15,8 @@ import EventsPage from "@/pages/events";
 import EventDetailPage from "@/pages/event-detail";
 import LoginPage from "@/pages/login";
 import TeamPage from "@/pages/team";
+import WebSocketDebug from "@/pages/websocket-debug";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 const queryClient = new QueryClient();
 
@@ -44,6 +46,7 @@ function Router() {
           <Route path="/events/:id" component={EventDetailPage} />
           <Route path="/login"      component={LoginPage} />
           <Route path="/team"       component={TeamPage} />
+          <Route path="/debug/ws"   component={WebSocketDebug} />
           <Route                    component={NotFound} />
         </Switch>
       </main>
@@ -53,22 +56,24 @@ function Router() {
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <AuthProvider>
-          <ThemeProvider>
-            <ScienceModeProvider>
-              <NotificationsProvider>
-                <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-                  <Router />
-                </WouterRouter>
-                <Toaster />
-              </NotificationsProvider>
-            </ScienceModeProvider>
-          </ThemeProvider>
-        </AuthProvider>
-      </TooltipProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <AuthProvider>
+            <ThemeProvider>
+              <ScienceModeProvider>
+                <NotificationsProvider>
+                  <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+                    <Router />
+                  </WouterRouter>
+                  <Toaster />
+                </NotificationsProvider>
+              </ScienceModeProvider>
+            </ThemeProvider>
+          </AuthProvider>
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 
