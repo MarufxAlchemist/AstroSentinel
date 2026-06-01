@@ -17,9 +17,33 @@ load_dotenv()
 client_id     = os.getenv("GCN_CLIENT_ID")
 client_secret = os.getenv("GCN_CLIENT_SECRET")
 
+# ---------------------------------------------------------------------------
+# Consumer group IDs — two distinct groups so live listener and history export
+# never share or clobber each other's committed offsets.
+#
+#   gcn-live-listener-v1   — this module (live WebSocket feed, offset=latest)
+#   gcn-history-export-v1  — scripts/export_gcn_history.py (offset=earliest)
+#
+# Using a stable named group ID (rather than a random UUID) means Kafka
+# remembers the committed position across server restarts, so reconnecting
+# after a crash picks up exactly where it left off instead of skipping events.
+# ---------------------------------------------------------------------------
+LIVE_GROUP_ID = "gcn-live-listener-v1"
+
 consumer = Consumer(
     client_id=client_id,
     client_secret=client_secret,
+    config={
+        "group.id":           LIVE_GROUP_ID,
+        # 'latest' — live listener only cares about new alerts, not history.
+        # The history export script uses 'earliest' on its own separate group.
+        "auto.offset.reset":  "latest",
+        # Auto-commit is fine for the live listener; if the server crashes
+        # mid-batch, at most one poll window of messages is skipped (acceptable
+        # for a real-time dashboard).  The export script disables auto-commit
+        # and commits manually after a full drain.
+        "enable.auto.commit": True,
+    },
 )
 
 consumer.subscribe(TOPICS)
