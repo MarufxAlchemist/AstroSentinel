@@ -34,9 +34,58 @@ def root():
     }
 
 
+import os
+
 @app.get("/health")
 def health():
     return {"status": "healthy"}
+
+@app.get("/api/events")
+def get_events(limit: int = 100):
+    events_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "historical_events.json")
+    try:
+        if os.path.exists(events_file):
+            with open(events_file, "r") as f:
+                events = json.load(f)
+                return {"events": events[:limit], "total": len(events)}
+    except Exception as e:
+        print(f"Error loading historical_events.json: {e}")
+    return {"events": [], "total": 0}
+
+@app.get("/api/events/stats")
+def get_event_stats():
+    events_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "historical_events.json")
+    try:
+        if os.path.exists(events_file):
+            with open(events_file, "r") as f:
+                events = json.load(f)
+                grb = sum(1 for e in events if e.get("eventType") == "GRB")
+                gw = sum(1 for e in events if e.get("eventType") == "GW")
+                frb = sum(1 for e in events if e.get("eventType") == "FRB")
+                
+                obs_counts = {}
+                for e in events:
+                    obs = e.get("observatory", "Unknown")
+                    obs_counts[obs] = obs_counts.get(obs, 0) + 1
+                
+                by_observatory = [{"observatory": k, "count": v} for k, v in obs_counts.items()]
+                
+                return {
+                    "totalEvents": len(events),
+                    "byType": {"GRB": grb, "GW": gw, "FRB": frb},
+                    "byObservatory": by_observatory,
+                    "recentRate": 0.5,
+                    "latestEvent": events[0] if events else None
+                }
+    except Exception as e:
+        print(f"Error loading stats: {e}")
+    return {
+        "totalEvents": 0,
+        "byType": {"GRB": 0, "GW": 0, "FRB": 0},
+        "byObservatory": [],
+        "recentRate": 0,
+        "latestEvent": None
+    }
 
 
 @app.websocket("/api/ws")
