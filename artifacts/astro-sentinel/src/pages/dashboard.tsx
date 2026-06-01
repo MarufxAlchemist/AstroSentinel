@@ -25,7 +25,7 @@ function typeLabel(type: string) {
   }
 }
 
-function TimelineBar({ events }: { events: AstroEvent[] }) {
+function TimelineBar({ events = [] }: { events?: AstroEvent[] }) {
   const days: { label: string; date: Date }[] = [];
   const now = new Date();
   for (let i = 7; i >= 0; i--) {
@@ -38,10 +38,14 @@ function TimelineBar({ events }: { events: AstroEvent[] }) {
   }
   const today = days[days.length - 1];
   const countByDay: Record<string, number> = {};
-  events.forEach(e => {
-    const d = e.detectionTime.slice(0, 10);
-    countByDay[d] = (countByDay[d] || 0) + 1;
-  });
+  if (Array.isArray(events)) {
+    events.forEach(e => {
+      if (e && e.detectionTime) {
+        const d = e.detectionTime.slice(0, 10);
+        countByDay[d] = (countByDay[d] || 0) + 1;
+      }
+    });
+  }
   return (
     <div className="flex items-center gap-0 h-9 bg-[hsl(var(--sidebar))] border-b border-border px-3 shrink-0 overflow-x-auto scrollbar-thin">
       <div className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground mr-3 shrink-0">
@@ -223,20 +227,30 @@ function StatsStrip() {
   const { data: stats } = useGetEventStats({ query: { refetchInterval: 10000, queryKey: ["event-stats"] } });
   const { scienceMode } = useScienceMode();
   if (!stats) return null;
+
+  const totalEvents    = (stats as any)?.totalEvents    ?? (stats as any)?.total     ?? 0;
+  const recentRate     = (stats as any)?.recentRate     ?? (stats as any)?.rate      ?? 0;
+  const byType         = (stats as any)?.byType         ?? {};
+  const byObservatory  = (stats as any)?.byObservatory  ?? [];
+  
+  const formattedTotal = typeof totalEvents === 'number' ? totalEvents.toLocaleString() : Number(totalEvents || 0).toLocaleString();
+
   return (
     <div className="flex items-center gap-4 px-3 h-7 bg-[hsl(var(--navbar-bg))] border-b border-border shrink-0 text-[11px] font-mono text-muted-foreground overflow-x-auto scrollbar-thin">
-      <span>Total: <span className="text-foreground font-bold">{stats.totalEvents.toLocaleString()}</span></span>
+      <span>Total: <span className="text-foreground font-bold">{formattedTotal}</span></span>
       <span className="text-border">|</span>
-      <span>Rate: <span className="text-primary font-bold">{stats.recentRate.toFixed(1)}/hr</span></span>
+      <span>Rate: <span className="text-primary font-bold">{Number(recentRate).toFixed(1)}/hr</span></span>
       <span className="text-border">|</span>
-      <span>GRB: <span className="text-orange-800 dark:text-amber-400 font-bold">{stats.byType.GRB}</span></span>
-      <span>GW: <span className="text-green-800 dark:text-emerald-400 font-bold">{stats.byType.GW}</span></span>
-      <span>FRB: <span className="text-amber-900 dark:text-yellow-300 font-bold">{stats.byType.FRB}</span></span>
+      <span>GRB: <span className="text-orange-800 dark:text-amber-400 font-bold">{byType.GRB ?? 0}</span></span>
+      <span>GW: <span className="text-green-800 dark:text-emerald-400 font-bold">{byType.GW ?? 0}</span></span>
+      <span>FRB: <span className="text-amber-900 dark:text-yellow-300 font-bold">{byType.FRB ?? 0}</span></span>
       {scienceMode && <>
         <span className="text-border">|</span>
         <span className="text-violet-400 font-semibold tracking-wider">RESEARCHER MODE</span>
         <span className="text-border">|</span>
-        {(stats.byObservatory ?? []).map((item: { observatory: string; count: number }) => (<span key={item.observatory}>{item.observatory}: <span className="text-foreground font-bold">{item.count}</span></span>))}
+        {byObservatory.map((item: { observatory: string; count: number }) => (
+          <span key={item.observatory}>{item.observatory}: <span className="text-foreground font-bold">{item.count}</span></span>
+        ))}
       </>}
     </div>
   );
@@ -247,13 +261,33 @@ export default function Dashboard() {
   const { events: liveEvents } = useAstroWebSocket();
   const { data: initialData } = useListEvents({ limit: 100 });
   const [selectedEvent, setSelectedEvent] = useState<AstroEvent | null>(null);
+  
   const allEvents = useMemo(() => {
     const map = new Map<string, AstroEvent>();
-    initialData?.events.forEach(e => map.set(e.eventId, e));
-    liveEvents.forEach(e => map.set(e.eventId, e));
-    return Array.from(map.values()).sort((a, b) => new Date(b.detectionTime).getTime() - new Date(a.detectionTime).getTime());
+    
+    if (initialData) {
+      const eventsList = (initialData as any).events || (Array.isArray(initialData) ? initialData : []);
+      if (Array.isArray(eventsList)) {
+        eventsList.forEach((e: AstroEvent) => {
+          if (e && e.eventId) map.set(e.eventId, e);
+        });
+      }
+    }
+    
+    if (Array.isArray(liveEvents)) {
+      liveEvents.forEach((e: AstroEvent) => {
+        if (e && e.eventId) map.set(e.eventId, e);
+      });
+    }
+    
+    return Array.from(map.values()).sort((a, b) => {
+      const timeA = a.detectionTime ? new Date(a.detectionTime).getTime() : 0;
+      const timeB = b.detectionTime ? new Date(b.detectionTime).getTime() : 0;
+      return timeB - timeA;
+    });
   }, [liveEvents, initialData]);
-  const liveIds = useMemo(() => new Set(liveEvents.map(e => e.id)), [liveEvents]);
+  
+  const liveIds = useMemo(() => new Set(Array.isArray(liveEvents) ? liveEvents.map(e => e.id) : []), [liveEvents]);
   const SIDEBAR_LIMIT = 50;
   const sidebarEvents = useMemo(() => allEvents.slice(0, SIDEBAR_LIMIT), [allEvents]);
   React.useEffect(() => {
@@ -287,15 +321,7 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="w-72 shrink-0 border-l border-border flex flex-col overflow-hidden bg-[hsl(var(--sidebar))]">
-          <ScrollArea className="flex-1 scrollbar-thin">
-            <div className="p-3">
-              <TeamDetails />
-              <h3 className="text-xs font-semibold text-foreground mb-2 uppercase tracking-wider">Selected source:</h3>
-              <p className="text-[11px] text-muted-foreground leading-relaxed font-sans">
-                {selectedEvent ? generateSummary(selectedEvent) : "Select an event from the list to view details"}
-              </p>
-            </div>
-          </ScrollArea>
+          <RightPanel event={selectedEvent} />
         </div>
       </div>
     </div>
