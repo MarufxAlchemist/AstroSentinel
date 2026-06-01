@@ -14,12 +14,17 @@ interface BaseMessage {
 
 interface ConnectionAckMessage extends BaseMessage {
   type: "connection_ack";
-  subscribed_topics: string[];
+  session_id: string;
   server_time: string;
+  subscribed_topics: string[];
+  buffer_size: number;
+  heartbeat_interval: number;
+  deprecated: boolean;
 }
 
 interface AlertMessage extends BaseMessage {
   type: "alert";
+  sequence: number;
   event: RawEvent;
   notification: RawNotification;
 }
@@ -27,24 +32,52 @@ interface AlertMessage extends BaseMessage {
 interface HeartbeatMessage extends BaseMessage {
   type: "heartbeat";
   listener_alive: boolean;
+  kafka_connected: boolean;
   last_alert_at: string | null;
+  last_sequence: number | null;
   active_connections: number;
+}
+
+interface HistoryStartMessage extends BaseMessage {
+  type: "history_start";
+  request_id: string;
+  since: string;
+  total_events: number;
+}
+
+interface HistoryEventMessage extends BaseMessage {
+  type: "history_event";
+  request_id: string;
+  event: RawEvent;
+  notification: RawNotification;
+}
+
+interface HistoryEndMessage extends BaseMessage {
+  type: "history_end";
+  request_id: string;
+  events_sent: number;
+  truncated: boolean;
 }
 
 interface PongMessage extends BaseMessage {
   type: "pong";
+  echo_sent_at: string;
 }
 
 interface ErrorMessage extends BaseMessage {
   type: "error";
   code: string;
   detail: string;
+  request_id?: string;
 }
 
 type ServerMessage =
   | ConnectionAckMessage
   | AlertMessage
   | HeartbeatMessage
+  | HistoryStartMessage
+  | HistoryEventMessage
+  | HistoryEndMessage
   | PongMessage
   | ErrorMessage;
 
@@ -71,6 +104,7 @@ interface RawEvent {
   moonDistance: number;
   fluence: number | null;
   dm: number | null;
+  raw: any;
 }
 
 interface RawNotification {
@@ -83,7 +117,6 @@ interface RawNotification {
 
 // ---------------------------------------------------------------------------
 // Adapter: RawEvent → AstroEvent
-// The backend already sends camelCase fields; this validates/casts them.
 // ---------------------------------------------------------------------------
 
 function toAstroEvent(raw: RawEvent): AstroEvent {
@@ -115,9 +148,8 @@ function toAstroEvent(raw: RawEvent): AstroEvent {
 const BASE_DELAY_MS  = 1_000;
 const MAX_DELAY_MS   = 30_000;
 const MAX_RETRIES    = 10;
-// If no heartbeat is received within this window, treat as dead
-const HEARTBEAT_WATCHDOG_MS = 45_000;
-// Close codes that should NOT trigger reconnect
+const DEFAULT_WATCHDOG_MS = 45_000;
+
 const NO_RECONNECT_CODES = new Set([
   1000, // Normal closure (server intentional)
   4001, // App-level: auth failure
@@ -130,6 +162,23 @@ function backoffDelay(attempt: number): number {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** crypto.randomUUID() is only available on HTTPS or localhost.
+ *  This fallback works on plain HTTP (e.g. dev via LAN IP).  */
+function safeUUID(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  // RFC-4122 v4 fallback
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
 
@@ -137,6 +186,7 @@ export interface UseAstroWebSocketResult {
   events: AstroEvent[];
   isConnected: boolean;
   listenerAlive: boolean;
+  kafkaConnected: boolean;
   latestNotification: Omit<AlertNotification, "id" | "seenAt"> | null;
   subscribedTopics: string[];
   retryCount: number;
@@ -147,6 +197,7 @@ export function useAstroWebSocket(): UseAstroWebSocketResult {
   const [events,               setEvents]               = useState<AstroEvent[]>([]);
   const [isConnected,          setIsConnected]          = useState(false);
   const [listenerAlive,        setListenerAlive]        = useState(false);
+  const [kafkaConnected,       setKafkaConnected]       = useState(true);
   const [latestNotification,   setLatestNotification]   = useState<Omit<AlertNotification, "id" | "seenAt"> | null>(null);
   const [subscribedTopics,     setSubscribedTopics]     = useState<string[]>([]);
   const [retryCount,           setRetryCount]           = useState(0);
@@ -154,13 +205,23 @@ export function useAstroWebSocket(): UseAstroWebSocketResult {
 
   const wsRef            = useRef<WebSocket | null>(null);
   const retryCountRef    = useRef(0);
-  const reconnectTimer   = useRef<ReturnType<typeof setTimeout>>();
-  const watchdogTimer    = useRef<ReturnType<typeof setTimeout>>();
+  const reconnectTimer   = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const watchdogTimer    = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const unmountedRef     = useRef(false);
 
+  const lastEventTimeRef = useRef<string | null>(null);
+  const lastSequenceRef  = useRef<number | null>(null);
+  const watchdogMsRef    = useRef<number>(DEFAULT_WATCHDOG_MS);
+
   // ------------------------------------------------------------------
-  // Heartbeat watchdog — resets every time a heartbeat arrives
+  // Actions
   // ------------------------------------------------------------------
+
+  const sendJson = useCallback((data: any) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(data));
+    }
+  }, []);
 
   const resetWatchdog = useCallback(() => {
     clearTimeout(watchdogTimer.current);
@@ -168,7 +229,7 @@ export function useAstroWebSocket(): UseAstroWebSocketResult {
       console.warn("[ws] Heartbeat watchdog expired — forcing reconnect");
       setListenerAlive(false);
       wsRef.current?.close(1001, "watchdog");
-    }, HEARTBEAT_WATCHDOG_MS);
+    }, watchdogMsRef.current);
   }, []);
 
   // ------------------------------------------------------------------
@@ -185,27 +246,48 @@ export function useAstroWebSocket(): UseAstroWebSocketResult {
       return;
     }
 
-    // Version guard — log and continue with best-effort parse
     if (msg.schema_version && msg.schema_version !== "1") {
       console.warn(`[ws] Unsupported schema_version: ${msg.schema_version}`);
     }
 
     switch (msg.type) {
-
       case "connection_ack": {
         setSubscribedTopics(msg.subscribed_topics);
         setListenerAlive(true);
+        watchdogMsRef.current = msg.heartbeat_interval * 1500; // x1.5
         resetWatchdog();
         console.info("[ws] Connected. Topics:", msg.subscribed_topics);
+
+        if (msg.deprecated) {
+          console.warn("[ws] Server indicated this API version is deprecated.");
+        }
+
+        // Request history if we have a cursor
+        if (lastEventTimeRef.current) {
+          sendJson({
+            type: "history_request",
+            schema_version: "1",
+            sent_at: new Date().toISOString(),
+            request_id: safeUUID(),
+            since: lastEventTimeRef.current,
+            last_sequence: lastSequenceRef.current
+          });
+        }
         break;
       }
 
       case "alert": {
         const event = toAstroEvent(msg.event);
-        setEvents(prev => [event, ...prev].slice(0, 100));
+        
+        lastEventTimeRef.current = event.detectionTime;
+        lastSequenceRef.current = msg.sequence;
 
-        const { event_id, event_type, observatory, timestamp, priority } =
-          msg.notification;
+        setEvents(prev => {
+          if (prev.some(e => e.id === event.id)) return prev;
+          return [event, ...prev].slice(0, 100);
+        });
+
+        const { event_id, event_type, observatory, timestamp, priority } = msg.notification;
         setLatestNotification({
           event_id,
           event_type,
@@ -213,17 +295,57 @@ export function useAstroWebSocket(): UseAstroWebSocketResult {
           timestamp,
           priority,
         });
+
+        if (priority === "high") {
+          sendJson({
+            type: "ack",
+            schema_version: "1",
+            sent_at: new Date().toISOString(),
+            event_id: event.eventId,
+            sequence: msg.sequence
+          });
+        }
         break;
       }
 
       case "heartbeat": {
         setListenerAlive(msg.listener_alive);
+        setKafkaConnected(msg.kafka_connected);
         resetWatchdog();
         break;
       }
 
+      case "history_start": {
+        console.info(`[ws] History replay starting... (${msg.total_events} events expected)`);
+        break;
+      }
+
+      case "history_event": {
+        const event = toAstroEvent(msg.event);
+        
+        // Update cursors if this is newer
+        if (!lastEventTimeRef.current || event.detectionTime > lastEventTimeRef.current) {
+           lastEventTimeRef.current = event.detectionTime;
+        }
+
+        setEvents(prev => {
+          if (prev.some(e => e.id === event.id)) return prev;
+          // Sort after adding history to ensure chronological order
+          const newEvents = [event, ...prev].sort(
+            (a, b) => new Date(b.detectionTime).getTime() - new Date(a.detectionTime).getTime()
+          );
+          return newEvents.slice(0, 100);
+        });
+        break;
+      }
+
+      case "history_end": {
+        console.info(`[ws] History replay complete. Truncated: ${msg.truncated}`);
+        break;
+      }
+
       case "pong": {
-        // Optional: could measure round-trip latency here
+        // Optional latency calc
         break;
       }
 
@@ -233,11 +355,10 @@ export function useAstroWebSocket(): UseAstroWebSocketResult {
       }
 
       default: {
-        // Unknown type — ignore gracefully (forward-compatibility)
         console.debug("[ws] Unknown message type:", (msg as BaseMessage).type);
       }
     }
-  }, [resetWatchdog]);
+  }, [resetWatchdog, sendJson]);
 
   // ------------------------------------------------------------------
   // Connect / reconnect
@@ -248,7 +369,11 @@ export function useAstroWebSocket(): UseAstroWebSocketResult {
     if (gaveUp) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl    = `${protocol}//${window.location.host}/api/ws?v=1`;
+    let wsUrl = `${protocol}//${window.location.host}/api/ws?v=1`;
+    
+    if (lastEventTimeRef.current) {
+        wsUrl += `&since=${encodeURIComponent(lastEventTimeRef.current)}`;
+    }
 
     const socket = new WebSocket(wsUrl);
     wsRef.current = socket;
@@ -258,7 +383,6 @@ export function useAstroWebSocket(): UseAstroWebSocketResult {
       setIsConnected(true);
       setRetryCount(0);
       retryCountRef.current = 0;
-      // connection_ack arrives from server immediately after open
     };
 
     socket.onmessage = (ev) => handleMessage(ev.data as string);
@@ -297,7 +421,6 @@ export function useAstroWebSocket(): UseAstroWebSocketResult {
 
     socket.onerror = (err) => {
       console.error("[ws] Socket error", err);
-      // onclose fires after onerror — reconnect logic lives there
     };
   }, [gaveUp, handleMessage]);
 
@@ -322,6 +445,7 @@ export function useAstroWebSocket(): UseAstroWebSocketResult {
     events,
     isConnected,
     listenerAlive,
+    kafkaConnected,
     latestNotification,
     subscribedTopics,
     retryCount,
