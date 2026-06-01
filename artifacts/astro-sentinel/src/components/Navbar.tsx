@@ -7,9 +7,17 @@ import { ResearcherMenu } from "./ResearcherMenu";
 
 interface NavbarProps {
   isConnected?: boolean;
+  listenerAlive?: boolean;
+  gaveUp?: boolean;
+  retryCount?: number;
 }
 
-export function Navbar({ isConnected = true }: NavbarProps) {
+export function Navbar({ 
+  isConnected = false, 
+  listenerAlive = false, 
+  gaveUp = false, 
+  retryCount = 0 
+}: NavbarProps) {
   const [location] = useLocation();
   const { scienceMode, toggleScienceMode } = useScienceMode();
   const { isDark, toggleTheme } = useTheme();
@@ -105,12 +113,17 @@ export function Navbar({ isConnected = true }: NavbarProps) {
       </div>
       {/* Connection status */}
       <div className={`flex items-center gap-1.5 text-xs font-mono px-2.5 py-1 rounded border mr-3 ${
-        isConnected
-          ? "text-green-600 border-green-500/40 bg-green-500/10 dark:text-green-400 dark:border-green-400/30 dark:bg-green-400/5"
-          : "text-red-600 border-red-500/40 bg-red-500/10 dark:text-red-400 dark:border-red-400/30 dark:bg-red-400/5"
+        gaveUp ? "text-red-600 border-red-500/40 bg-red-500/10 dark:text-red-400 dark:border-red-400/30 dark:bg-red-400/5"
+        : (!isConnected || !listenerAlive) ? "text-amber-600 border-amber-500/40 bg-amber-500/10 dark:text-amber-400 dark:border-amber-400/30 dark:bg-amber-400/5"
+        : "text-green-600 border-green-500/40 bg-green-500/10 dark:text-green-400 dark:border-green-400/30 dark:bg-green-400/5"
       }`}>
-        {isConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-        <span>{isConnected ? "STREAM ACTIVE" : "LINK LOST"}</span>
+        {isConnected && listenerAlive ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+        <span>
+          {gaveUp ? "LINK FAILED"
+           : !isConnected ? `RECONNECTING (${retryCount})`
+           : !listenerAlive ? "LISTENER DOWN"
+           : "STREAM ACTIVE"}
+        </span>
       </div>
       {/* Researcher menu */}
       <ResearcherMenu />

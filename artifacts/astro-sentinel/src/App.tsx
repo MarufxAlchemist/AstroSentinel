@@ -19,7 +19,7 @@ import TeamPage from "@/pages/team";
 const queryClient = new QueryClient();
 
 function Router() {
-  const { isConnected, latestNotification } = useAstroWebSocket();
+  const { isConnected, listenerAlive, gaveUp, retryCount, latestNotification } = useAstroWebSocket();
   const { addNotification } = useNotifications();
 
   // Forward WS notifications into context
@@ -31,7 +31,12 @@ function Router() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
-      <Navbar isConnected={isConnected} />
+      <Navbar 
+        isConnected={isConnected} 
+        listenerAlive={listenerAlive}
+        gaveUp={gaveUp}
+        retryCount={retryCount}
+      />
       <main className="flex-1 flex flex-col overflow-hidden">
         <Switch>
           <Route path="/"           component={Dashboard} />
