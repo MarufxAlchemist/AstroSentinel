@@ -50,11 +50,10 @@ export function ResearcherMenu() {
           <div className="px-3 py-2.5 border-b border-border">
             <div className="text-[11px] font-semibold text-foreground truncate">{user.name ?? "Researcher"}</div>
             <div className="text-[10px] text-muted-foreground truncate">{user.email}</div>
-            <div className={`mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold uppercase ${
-              user.role === "admin"
+            <div className={`mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold uppercase ${user.role === "admin"
                 ? "bg-primary/15 text-primary"
                 : "bg-muted text-muted-foreground"
-            }`}>
+              }`}>
               {user.role === "admin" && <Shield className="w-2 h-2" />}
               {user.role}
             </div>
@@ -72,7 +71,11 @@ export function ResearcherMenu() {
           )}
 
           <button
-            onClick={() => { logout(); setOpen(false); }}
+            onClick={() => {
+              logout();
+              setOpen(false);
+              navigate("/login");
+            }}
             className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-red-600 dark:text-red-400 hover:bg-red-500/10 transition-colors"
           >
             <LogOut className="w-3.5 h-3.5" />

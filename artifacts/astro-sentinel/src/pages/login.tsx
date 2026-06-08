@@ -7,7 +7,7 @@ type Mode = "login" | "register";
 
 interface ApiAuthResponse {
   token: string;
-  user: { id: number; email: string; name: string; role: string };
+  user: { id: string; email: string; name: string; role: string };
   error?: string;
 }
 
@@ -70,11 +70,10 @@ export default function LoginPage() {
             <button
               key={m}
               onClick={() => { setMode(m); setError(""); }}
-              className={`flex-1 py-2 text-[11px] font-mono font-semibold uppercase tracking-wider transition-all ${
-                mode === m
-                  ? "bg-primary/15 text-primary border-b-2 border-primary"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
+              className={`flex-1 py-2 text-[11px] font-mono font-semibold uppercase tracking-wider transition-all ${mode === m
+                ? "bg-primary/15 text-primary border-b-2 border-primary"
+                : "text-muted-foreground hover:text-foreground"
+                }`}
             >
               {m === "login" ? "Sign in" : "Register"}
             </button>

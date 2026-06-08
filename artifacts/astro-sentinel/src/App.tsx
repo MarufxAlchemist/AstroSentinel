@@ -17,6 +17,7 @@ import LoginPage from "@/pages/login";
 import TeamPage from "@/pages/team";
 import WebSocketDebug from "@/pages/websocket-debug";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
 
 const queryClient = new QueryClient();
 
@@ -33,21 +34,37 @@ function Router() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
-      <Navbar 
-        isConnected={isConnected} 
+      <Navbar
+        isConnected={isConnected}
         listenerAlive={listenerAlive}
         gaveUp={gaveUp}
         retryCount={retryCount}
       />
       <main className="flex-1 flex flex-col overflow-hidden">
         <Switch>
-          <Route path="/"           component={Dashboard} />
-          <Route path="/events"     component={EventsPage} />
-          <Route path="/events/:id" component={EventDetailPage} />
-          <Route path="/login"      component={LoginPage} />
-          <Route path="/team"       component={TeamPage} />
-          <Route path="/debug/ws"   component={WebSocketDebug} />
-          <Route                    component={NotFound} />
+          <Route path="/">
+            <ProtectedRoute>
+              <Dashboard />
+            </ProtectedRoute>
+          </Route>
+          <Route path="/events">
+            <ProtectedRoute>
+              <EventsPage />
+            </ProtectedRoute>
+          </Route>
+          <Route path="/events/:id">
+            <ProtectedRoute>
+              <EventDetailPage />
+            </ProtectedRoute>
+          </Route>
+          <Route path="/login" component={LoginPage} />
+          <Route path="/team">
+            <ProtectedRoute>
+              <TeamPage />
+            </ProtectedRoute>
+          </Route>
+          <Route path="/debug/ws" component={WebSocketDebug} />
+          <Route component={NotFound} />
         </Switch>
       </main>
     </div>
