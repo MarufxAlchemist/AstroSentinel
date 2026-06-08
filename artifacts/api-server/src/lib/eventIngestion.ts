@@ -53,12 +53,36 @@ function mockSunMoonDistance(ra: number, dec: number) {
   return { sunDistance: Math.round(sunDistance * 10) / 10, moonDistance: Math.round(moonDistance * 10) / 10 };
 }
 
+const dailyCounters: Record<string, number> = {};
+
+function getSuffix(n: number): string {
+  let s = "";
+  while (n > 0) {
+    n--;
+    s = String.fromCharCode(65 + (n % 26)) + s;
+    n = Math.floor(n / 26);
+  }
+  return s;
+}
+
 function generateEventId(type: string, date: Date): string {
   const year = date.getUTCFullYear().toString().slice(2);
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");
   const day = String(date.getUTCDate()).padStart(2, "0");
-  const randomHex = Math.floor(Math.random() * 0xFFFF).toString(16).toUpperCase().padStart(4, "0");
-  return `${type}${year}${month}${day}${randomHex}`;
+  
+  const prefix = `${type}${year}${month}${day}`;
+  
+  if (dailyCounters[prefix] === undefined) {
+    dailyCounters[prefix] = 0;
+  }
+  
+  const count = dailyCounters[prefix]!;
+  dailyCounters[prefix] = count + 1;
+  
+  if (count === 0) {
+    return prefix;
+  }
+  return `${prefix}${getSuffix(count)}`;
 }
 
 async function generateAndStoreEvent() {
@@ -78,33 +102,50 @@ async function generateAndStoreEvent() {
   const far = parseFloat(randomBetween(1e-10, 1e-5).toExponential(4));
   const fluence = eventType === "GRB" ? parseFloat(randomBetween(1e-8, 1e-5).toExponential(4)) : null;
   const dm = eventType === "FRB" ? Math.round(randomBetween(100, 2000) * 10) / 10 : null;
+  const t90 = eventType === "GRB" ? Math.round(randomBetween(0.5, 60) * 10) / 10 : null;
+  const peakFlux = eventType === "GW" ? null : parseFloat(randomBetween(1e-8, 1e-3).toExponential(4));
+  const chirpMass = eventType === "GW" ? Math.round(randomBetween(1.2, 50) * 100) / 100 : null;
+  const luminosityDistance = eventType === "GW" ? Math.round(randomBetween(10, 5000)) : null;
 
   const { galLat, galLon } = computeGalacticCoords(ra, dec);
   const { sunDistance, moonDistance } = mockSunMoonDistance(ra, dec);
 
   const eventStartNs = Date.now() * 1000;
-  const latencyUs = Math.floor(randomBetween(100, 9500));
-
-  const record = {
-    eventId,
-    eventType,
-    observatory,
-    detectionTime,
-    ra,
-    dec,
-    errorRadius,
-    snr,
-    far,
-    fluence,
-    dm,
-    galLat,
-    galLon,
-    sunDistance,
-    moonDistance,
-    latencyUs,
-  };
+  const latencyUs = BigInt(Math.floor(randomBetween(100, 9500)));
 
   try {
+    const { labs } = await import("@workspace/db");
+    let [defaultLab] = await db.select().from(labs).limit(1);
+    if (!defaultLab) {
+      [defaultLab] = await db.insert(labs).values({
+        slug: "default",
+        name: "Default Lab",
+      }).returning();
+    }
+
+    const record = {
+      labId: defaultLab.id,
+      eventId,
+      eventType,
+      detectionTime: new Date(Date.now()),
+      ra,
+      dec,
+      errorRadius,
+      snr,
+      far,
+      fluence,
+      dm,
+      t90,
+      peakFlux,
+      chirpMass,
+      luminosityDistance,
+      galLat,
+      galLon,
+      sunDistance,
+      moonDistance,
+      latencyUs,
+    };
+
     const [inserted] = await db.insert(eventsTable).values(record).returning();
     logger.info({ eventId, eventType, observatory }, "Event ingested");
 
@@ -112,8 +153,8 @@ async function generateAndStoreEvent() {
       id: String(inserted.id),
       eventId: inserted.eventId,
       eventType: inserted.eventType,
-      observatory: inserted.observatory,
-      detectionTime: inserted.detectionTime,
+      observatory: observatory,
+      detectionTime: inserted.detectionTime.toISOString(),
       ra: inserted.ra,
       dec: inserted.dec,
       errorRadius: inserted.errorRadius,
@@ -121,18 +162,22 @@ async function generateAndStoreEvent() {
       far: inserted.far,
       fluence: inserted.fluence ?? undefined,
       dm: inserted.dm ?? undefined,
+      t90: inserted.t90 ?? undefined,
+      peakFlux: inserted.peakFlux ?? undefined,
+      chirpMass: inserted.chirpMass ?? undefined,
+      luminosityDistance: inserted.luminosityDistance ?? undefined,
       galLat: inserted.galLat,
       galLon: inserted.galLon,
       sunDistance: inserted.sunDistance,
       moonDistance: inserted.moonDistance,
-      latencyUs: inserted.latencyUs,
+      latencyUs: Number(inserted.latencyUs),
       createdAt: inserted.createdAt.toISOString(),
     };
 
     broadcastEvent(broadcastPayload);
 
     // Simulate email alert (print GCN-style notice)
-    printEmailAlert(broadcastPayload);
+    printEmailAlert({ ...broadcastPayload, detectionTime });
   } catch (err) {
     logger.error({ err, eventId }, "Failed to ingest event");
   }

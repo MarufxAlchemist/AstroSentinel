@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import app from "./app";
@@ -27,18 +28,45 @@ setWebSocketServer(wss);
 wss.on("connection", (ws, req) => {
   logger.info({ ip: req.socket.remoteAddress }, "WebSocket client connected");
 
+  // Send connection ack
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: "connection_ack",
+      schema_version: "1",
+      sent_at: new Date().toISOString(),
+      session_id: crypto.randomUUID(),
+      server_time: new Date().toISOString(),
+      subscribed_topics: ["events"],
+      buffer_size: 100,
+      heartbeat_interval: 30000,
+      deprecated: false
+    }));
+  }
+
+  // Set up heartbeat
+  const interval = setInterval(() => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: "heartbeat",
+        schema_version: "1",
+        sent_at: new Date().toISOString(),
+        listener_alive: true,
+        kafka_connected: true,
+        last_alert_at: null,
+        last_sequence: null,
+        active_connections: wss.clients.size
+      }));
+    }
+  }, 30000);
+
   ws.on("close", () => {
     logger.info("WebSocket client disconnected");
+    clearInterval(interval);
   });
 
   ws.on("error", (err) => {
     logger.error({ err }, "WebSocket error");
   });
-
-  // Send a welcome ping
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "connected", message: "AstroSentinel WebSocket connected" }));
-  }
 });
 
 server.listen(port, () => {

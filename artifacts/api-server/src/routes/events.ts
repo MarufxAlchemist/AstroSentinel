@@ -7,11 +7,12 @@ const router = Router();
 
 function formatEvent(row: typeof eventsTable.$inferSelect) {
   return {
+    // id and latencyUs are BigInt because of bigserial({ mode: "bigint" })
     id: String(row.id),
     eventId: row.eventId,
     eventType: row.eventType,
-    observatory: row.observatory,
-    detectionTime: row.detectionTime,
+    observatory: "Unknown",
+    detectionTime: row.detectionTime.toISOString(),
     ra: row.ra,
     dec: row.dec,
     errorRadius: row.errorRadius,
@@ -19,11 +20,15 @@ function formatEvent(row: typeof eventsTable.$inferSelect) {
     far: row.far,
     fluence: row.fluence ?? undefined,
     dm: row.dm ?? undefined,
+    t90: row.t90 ?? undefined,
+    peakFlux: row.peakFlux ?? undefined,
+    chirpMass: row.chirpMass ?? undefined,
+    luminosityDistance: row.luminosityDistance ?? undefined,
     galLat: row.galLat,
     galLon: row.galLon,
     sunDistance: row.sunDistance,
     moonDistance: row.moonDistance,
-    latencyUs: row.latencyUs,
+    latencyUs: String(row.latencyUs),
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -36,12 +41,11 @@ router.get("/events", async (req, res) => {
     return;
   }
 
-  const { limit = 50, offset = 0, eventType, observatory } = parsed.data;
+  const { limit = 50, offset = 0, eventType } = parsed.data;
 
   const conditions = [];
   if (eventType) conditions.push(eq(eventsTable.eventType, eventType));
-  if (observatory) conditions.push(eq(eventsTable.observatory, observatory));
-
+  
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const [events, countResult] = await Promise.all([
@@ -60,24 +64,18 @@ router.get("/events", async (req, res) => {
 
   res.json({
     events: events.map(formatEvent),
-    total: countResult[0]?.count ?? 0,
+    total: Number(countResult[0]?.count ?? 0),
   });
 });
 
 // GET /events/stats
 router.get("/events/stats", async (req, res) => {
-  const [totalResult, byTypeResult, byObsResult, recentResult, latestResult] = await Promise.all([
+  const [totalResult, byTypeResult, recentResult, latestResult] = await Promise.all([
     db.select({ count: sql<number>`count(*)::int` }).from(eventsTable),
     db
       .select({ eventType: eventsTable.eventType, count: sql<number>`count(*)::int` })
       .from(eventsTable)
       .groupBy(eventsTable.eventType),
-    db
-      .select({ observatory: eventsTable.observatory, count: sql<number>`count(*)::int` })
-      .from(eventsTable)
-      .groupBy(eventsTable.observatory)
-      .orderBy(desc(sql`count(*)`))
-      .limit(10),
     db
       .select({ count: sql<number>`count(*)::int` })
       .from(eventsTable)
@@ -88,15 +86,15 @@ router.get("/events/stats", async (req, res) => {
   const byType = { GRB: 0, GW: 0, FRB: 0 };
   for (const row of byTypeResult) {
     if (row.eventType in byType) {
-      byType[row.eventType as keyof typeof byType] = row.count;
+      byType[row.eventType as keyof typeof byType] = Number(row.count);
     }
   }
 
   res.json({
-    totalEvents: totalResult[0]?.count ?? 0,
+    totalEvents: Number(totalResult[0]?.count ?? 0),
     byType,
-    byObservatory: byObsResult,
-    recentRate: recentResult[0]?.count ?? 0,
+    byObservatory: [], // observatory column was removed
+    recentRate: Number(recentResult[0]?.count ?? 0),
     latestEvent: latestResult[0] ? formatEvent(latestResult[0]) : null,
   });
 });
@@ -115,7 +113,7 @@ router.get("/events/:id", async (req, res) => {
     return;
   }
 
-  const [row] = await db.select().from(eventsTable).where(eq(eventsTable.id, id)).limit(1);
+  const [row] = await db.select().from(eventsTable).where(eq(eventsTable.id, BigInt(id))).limit(1);
 
   if (!row) {
     res.status(404).json({ error: "Event not found" });

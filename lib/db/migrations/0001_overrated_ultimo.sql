@@ -1,0 +1,1 @@
+ALTER TABLE "core"."events" ALTER COLUMN "sky_position" SET DATA TYPE text;

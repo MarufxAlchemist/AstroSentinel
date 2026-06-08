@@ -1,0 +1,14 @@
+----------------------------------FOR BACKEND---------------------------------------
+
+cd "E:\Maruf data\Antigravity\Cosmic-Alert-System\artifacts\api-server"
+
+$env:DATABASE_URL="postgresql://postgres:Maruf%40788824@localhost:5432/Astro-sentinel"
+$env:PORT="8000"
+
+pnpm dev
+
+----------------------------------FOR FRONTEND---------------------------------------
+
+cd "E:\Maruf data\Antigravity\Cosmic-Alert-System\artifacts\astro-sentinel"
+
+pnpm dev

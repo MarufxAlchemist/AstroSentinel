@@ -1,6 +1,6 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
-import { db, usersTable } from "@workspace/db";
+import { db, users as usersTable, labs, labMembers } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { requireAuth, signToken, AuthPayload } from "../middlewares/auth.js";
 import type { Request } from "express";
@@ -36,7 +36,7 @@ router.post("/auth/register", async (req, res) => {
   const passwordHash = await bcrypt.hash(password, 12);
   const [user] = await db
     .insert(usersTable)
-    .values({ email: email.toLowerCase(), passwordHash, name: name ?? email.split("@")[0] ?? "Researcher", role })
+    .values({ email: email.toLowerCase(), passwordHash, name: name ?? email.split("@")[0] ?? "Researcher" })
     .returning();
 
   if (!user) {
@@ -44,8 +44,25 @@ router.post("/auth/register", async (req, res) => {
     return;
   }
 
-  const token = signToken({ userId: user.id, email: user.email, role: user.role });
-  res.status(201).json({ token, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+  // Find or create default lab
+  let [defaultLab] = await db.select().from(labs).limit(1);
+  if (!defaultLab) {
+    [defaultLab] = await db.insert(labs).values({
+      slug: "default",
+      name: "Default Lab",
+    }).returning();
+  }
+
+  if (defaultLab) {
+    await db.insert(labMembers).values({
+      labId: defaultLab.id,
+      userId: user.id,
+      role: role,
+    });
+  }
+
+  const token = signToken({ userId: user.id, email: user.email, role: role });
+  res.status(201).json({ token, user: { id: user.id, email: user.email, name: user.name, role: role } });
 });
 
 // POST /auth/login
@@ -68,8 +85,12 @@ router.post("/auth/login", async (req, res) => {
     return;
   }
 
-  const token = signToken({ userId: user.id, email: user.email, role: user.role });
-  res.json({ token, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+  // Get user's role from their lab membership
+  const [member] = await db.select().from(labMembers).where(eq(labMembers.userId, user.id)).limit(1);
+  const role = member ? member.role : "researcher";
+
+  const token = signToken({ userId: user.id, email: user.email, role: role });
+  res.json({ token, user: { id: user.id, email: user.email, name: user.name, role: role } });
 });
 
 // GET /auth/me

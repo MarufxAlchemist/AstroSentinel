@@ -143,6 +143,22 @@ components:
           type: number
           nullable: true
           description: Dispersion measure (pc/cm³), FRB only
+        t90:
+          type: number
+          nullable: true
+          description: T90 duration (s), GRB only
+        peakFlux:
+          type: number
+          nullable: true
+          description: Peak Flux, FRB and GRB
+        chirpMass:
+          type: number
+          nullable: true
+          description: Chirp mass (solar masses), GW only
+        luminosityDistance:
+          type: number
+          nullable: true
+          description: Luminosity distance (Mpc), GW only
         galLat:
           type: number
           description: Galactic latitude

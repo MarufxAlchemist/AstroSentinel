@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 const JWT_SECRET = process.env["SESSION_SECRET"] ?? "astrosentinel-dev-secret";
 
 export interface AuthPayload {
-  userId: number;
+  userId: string;
   email: string;
   role: string;
 }
