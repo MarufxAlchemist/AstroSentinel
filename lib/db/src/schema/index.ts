@@ -4,11 +4,13 @@ export {
   labs,
   labMembers,
   labInvitations,
+  eventBookmarks,
   labsRelations,
   labMembersRelations,
   labInvitationsRelations,
+  eventBookmarksRelations,
 } from "./tenant.js";
-export type { Lab, InsertLab, LabMember, InsertLabMember, LabInvitation, InsertLabInvitation } from "./tenant.js";
+export type { Lab, InsertLab, LabMember, InsertLabMember, LabInvitation, InsertLabInvitation, EventBookmark, InsertEventBookmark } from "./tenant.js";
 
 // ─── Identity ─────────────────────────────────────────────────────────────────
 export {

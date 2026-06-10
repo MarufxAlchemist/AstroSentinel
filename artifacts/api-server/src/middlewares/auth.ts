@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 
-const JWT_SECRET = process.env["SESSION_SECRET"] ?? "astrosentinel-dev-secret";
+const JWT_SECRET = process.env["JWT_SECRET"] ?? "astrosentinel-dev-secret";
 
 export interface AuthPayload {
   userId: string;

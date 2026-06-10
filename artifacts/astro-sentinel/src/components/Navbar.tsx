@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Telescope, Search, Share2, Settings, Wifi, WifiOff, Sun, Moon } from "lucide-react";
+import { Telescope, Search, Share2, Settings, Wifi, WifiOff, Sun, Moon, Bookmark } from "lucide-react";
 import { useScienceMode } from "@/lib/ScienceModeContext";
 import { useTheme } from "@/lib/ThemeContext";
 import { NotificationBell } from "./NotificationBell";
@@ -65,6 +65,17 @@ export function Navbar({
           }`}
         >
           Event Archive
+        </Link>
+        <Link
+          href="/bookmarks"
+          className={`flex items-center gap-1 px-2.5 py-1 rounded transition-colors ${
+            location === "/bookmarks"
+              ? "bg-primary/15 text-primary border border-primary/30"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Bookmark className="w-3 h-3" />
+          Bookmarks
         </Link>
       </div>
       {/* Science mode toggle */}

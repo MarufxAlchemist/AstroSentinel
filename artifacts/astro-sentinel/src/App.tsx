@@ -1,5 +1,6 @@
 import { Switch, Route, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { GoogleOAuthProvider } from "@react-oauth/google";
 import { useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -15,6 +16,8 @@ import EventsPage from "@/pages/events";
 import EventDetailPage from "@/pages/event-detail";
 import LoginPage from "@/pages/login";
 import TeamPage from "@/pages/team";
+import ResearchWorkspacePage from "@/pages/research-workspace";
+import BookmarksPage from "@/pages/bookmarks";
 import WebSocketDebug from "@/pages/websocket-debug";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
@@ -52,9 +55,19 @@ function Router() {
               <EventsPage />
             </ProtectedRoute>
           </Route>
+          <Route path="/events/:id/workspace">
+            <ProtectedRoute>
+              <ResearchWorkspacePage />
+            </ProtectedRoute>
+          </Route>
           <Route path="/events/:id">
             <ProtectedRoute>
               <EventDetailPage />
+            </ProtectedRoute>
+          </Route>
+          <Route path="/bookmarks">
+            <ProtectedRoute>
+              <BookmarksPage />
             </ProtectedRoute>
           </Route>
           <Route path="/login" component={LoginPage} />
@@ -72,24 +85,27 @@ function Router() {
 }
 
 function App() {
+  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || "dummy-client-id.apps.googleusercontent.com";
   return (
     <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <AuthProvider>
-            <ThemeProvider>
-              <ScienceModeProvider>
-                <NotificationsProvider>
-                  <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-                    <Router />
-                  </WouterRouter>
-                  <Toaster />
-                </NotificationsProvider>
-              </ScienceModeProvider>
-            </ThemeProvider>
-          </AuthProvider>
-        </TooltipProvider>
-      </QueryClientProvider>
+      <GoogleOAuthProvider clientId={googleClientId}>
+        <QueryClientProvider client={queryClient}>
+          <TooltipProvider>
+            <AuthProvider>
+              <ThemeProvider>
+                <ScienceModeProvider>
+                  <NotificationsProvider>
+                    <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+                      <Router />
+                    </WouterRouter>
+                    <Toaster />
+                  </NotificationsProvider>
+                </ScienceModeProvider>
+              </ThemeProvider>
+            </AuthProvider>
+          </TooltipProvider>
+        </QueryClientProvider>
+      </GoogleOAuthProvider>
     </ErrorBoundary>
   );
 }

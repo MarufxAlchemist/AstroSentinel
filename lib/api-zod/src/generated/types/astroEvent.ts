@@ -5,7 +5,9 @@
  * AstroSentinel API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { AstroEventClassificationTier } from './astroEventClassificationTier';
 import type { AstroEventEventType } from './astroEventEventType';
+import type { AstroEventLifecycle } from './astroEventLifecycle';
 
 export interface AstroEvent {
   id: string;
@@ -48,4 +50,10 @@ export interface AstroEvent {
   /** System latency in microseconds */
   latencyUs: number;
   createdAt: string;
+  /** Normalised alert lifecycle state */
+  lifecycle: AstroEventLifecycle;
+  /** Raw alert_type string from originating source (e.g. PRELIMINARY, RETRACTION) */
+  alertType?: string | null;
+  /** IceCube classification tier */
+  classificationTier?: AstroEventClassificationTier;
 }

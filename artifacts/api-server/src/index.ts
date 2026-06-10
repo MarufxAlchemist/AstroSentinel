@@ -4,7 +4,11 @@ import { WebSocketServer, WebSocket } from "ws";
 import app from "./app";
 import { logger } from "./lib/logger";
 import { setWebSocketServer } from "./lib/eventBroadcaster";
+// startIngestion is now a no-op — imported only so existing code that calls it
+// doesn't break; real events come from startKafkaConsumer() below.
 import { startIngestion } from "./lib/eventIngestion";
+import { startKafkaConsumer } from "./lib/kafkaConsumer";
+import { runBootstrap } from "./lib/bootstrap";
 
 const rawPort = process.env["PORT"];
 
@@ -36,14 +40,21 @@ wss.on("connection", (ws, req) => {
       sent_at: new Date().toISOString(),
       session_id: crypto.randomUUID(),
       server_time: new Date().toISOString(),
-      subscribed_topics: ["events"],
+      subscribed_topics: [
+        "igwn.gwalert",
+        "gcn.notices.chime.frb",
+        "gcn.notices.icecube.lvk_nu_track_search",
+        "gcn.notices.icecube.gold_bronze_track_alerts",
+        "gcn.notices.swift.bat.guano",
+        "gcn.notices.einstein_probe.wxt.alert",
+      ],
       buffer_size: 100,
       heartbeat_interval: 30000,
-      deprecated: false
+      deprecated: false,
     }));
   }
 
-  // Set up heartbeat
+  // Heartbeat every 30 s so the client can detect a dead connection
   const interval = setInterval(() => {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
@@ -54,7 +65,7 @@ wss.on("connection", (ws, req) => {
         kafka_connected: true,
         last_alert_at: null,
         last_sequence: null,
-        active_connections: wss.clients.size
+        active_connections: wss.clients.size,
       }));
     }
   }, 30000);
@@ -71,5 +82,27 @@ wss.on("connection", (ws, req) => {
 
 server.listen(port, () => {
   logger.info({ port }, "Server listening (HTTP + WebSocket)");
+
+  // ── SIMULATOR (no-op) ────────────────────────────────────────────────────
+  // startIngestion() is kept here for import compatibility but does nothing.
   startIngestion();
+
+  // ── BOOTSTRAP SEED ───────────────────────────────────────────────────────
+  // Inserts up to 10 historical events from recent_events.json only when
+  // core.events is completely empty. No-op on every subsequent startup.
+  runBootstrap()
+    .then(() => {
+      // ── REAL KAFKA CONSUMER ────────────────────────────────────────────
+      // Connects to GCN Kafka, subscribes to the real observatory topics,
+      // and broadcasts every accepted alert to all connected WebSocket clients.
+      startKafkaConsumer().catch((err) => {
+        logger.error({ err }, "[kafka] startKafkaConsumer() failed — no live alerts will be received");
+      });
+    })
+    .catch((err) => {
+      logger.error({ err }, "[bootstrap] runBootstrap() threw — starting Kafka consumer anyway");
+      startKafkaConsumer().catch((err2) => {
+        logger.error({ err: err2 }, "[kafka] startKafkaConsumer() failed — no live alerts will be received");
+      });
+    });
 });

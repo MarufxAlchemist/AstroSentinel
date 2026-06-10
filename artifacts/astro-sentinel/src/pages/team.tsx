@@ -11,14 +11,22 @@ interface TeamMember {
   createdAt: string;
 }
 
+interface LabInvitation {
+  id: string;
+  email: string;
+  role: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
 export default function TeamPage() {
   const { token, isAdmin } = useAuth();
   const [, navigate] = useLocation();
   const [members, setMembers] = useState<TeamMember[]>([]);
+  const [invitations, setInvitations] = useState<LabInvitation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [addEmail, setAddEmail] = useState("");
-  const [addName, setAddName] = useState("");
   const [addRole, setAddRole] = useState<"researcher" | "admin">("researcher");
   const [addError, setAddError] = useState("");
   const [adding, setAdding] = useState(false);
@@ -26,6 +34,7 @@ export default function TeamPage() {
   useEffect(() => {
     if (!token) { navigate("/login"); return; }
     fetchMembers();
+    fetchInvitations();
   }, [token]);
 
   async function fetchMembers() {
@@ -41,20 +50,30 @@ export default function TeamPage() {
     }
   }
 
-  async function addMember(e: React.FormEvent) {
+  async function fetchInvitations() {
+    try {
+      const res = await fetch("/api/team/invitations", { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json() as { invitations: LabInvitation[] };
+      setInvitations(data.invitations ?? []);
+    } catch {
+      // Ignore failure to load invitations
+    }
+  }
+
+  async function inviteMember(e: React.FormEvent) {
     e.preventDefault();
     setAddError("");
     setAdding(true);
     try {
-      const res = await fetch("/api/team", {
+      const res = await fetch("/api/team/invitations", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ email: addEmail, name: addName, role: addRole }),
+        body: JSON.stringify({ email: addEmail, role: addRole }),
       });
-      const data = await res.json() as { member?: TeamMember; error?: string };
-      if (!res.ok) { setAddError(data.error ?? "Failed to add member"); return; }
-      setMembers(prev => [...prev, data.member!]);
-      setAddEmail(""); setAddName("");
+      const data = await res.json() as { invitation?: LabInvitation; error?: string };
+      if (!res.ok) { setAddError(data.error ?? "Failed to send invitation"); return; }
+      setInvitations(prev => [...prev, data.invitation!]);
+      setAddEmail("");
     } catch {
       setAddError("Network error");
     } finally {
@@ -68,6 +87,15 @@ export default function TeamPage() {
       setMembers(prev => prev.filter(m => m.id !== id));
     } catch {
       setError("Failed to remove member");
+    }
+  }
+
+  async function revokeInvitation(id: string) {
+    try {
+      await fetch(`/api/team/invitations/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      setInvitations(prev => prev.filter(i => i.id !== id));
+    } catch {
+      setError("Failed to revoke invitation");
     }
   }
 
@@ -95,17 +123,10 @@ export default function TeamPage() {
         {isAdmin && (
           <div className="rounded border border-border bg-card p-4 space-y-3">
             <div className="flex items-center gap-2 text-xs font-semibold text-foreground mb-2">
-              <UserPlus className="w-3.5 h-3.5 text-primary" /> Add Team Member
+              <UserPlus className="w-3.5 h-3.5 text-primary" /> Invite Researcher
             </div>
-            <form onSubmit={addMember} className="flex flex-col gap-2">
+            <form onSubmit={inviteMember} className="flex flex-col gap-2">
               <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Name"
-                  value={addName}
-                  onChange={e => setAddName(e.target.value)}
-                  className="flex-1 px-3 py-1.5 text-xs bg-background border border-border rounded text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/60 transition-colors"
-                />
                 <input
                   type="email"
                   placeholder="Institutional email"
@@ -129,9 +150,44 @@ export default function TeamPage() {
                 disabled={adding}
                 className="self-start px-4 py-1.5 bg-primary text-primary-foreground text-xs font-semibold rounded hover:bg-primary/90 disabled:opacity-60 transition-colors"
               >
-                {adding ? "Adding…" : "Add Member"}
+                {adding ? "Sending…" : "Send Invite"}
               </button>
             </form>
+          </div>
+        )}
+
+        {/* Pending Invitations list */}
+        {invitations.length > 0 && (
+          <div className="rounded border border-border overflow-hidden mb-6">
+            <div className="px-4 py-2.5 border-b border-border bg-card flex items-center justify-between">
+              <span className="text-xs font-semibold text-foreground">Pending Invitations</span>
+              <span className="text-[10px] text-muted-foreground font-mono">{invitations.length} invitations</span>
+            </div>
+            <div className="divide-y divide-border">
+              {invitations.map(i => (
+                <div key={i.id} className="flex items-center gap-3 px-4 py-3 hover:bg-accent/10 transition-colors">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-medium text-foreground">{i.email}</div>
+                    <div className="text-[10px] text-muted-foreground">Expires: {new Date(i.expiresAt).toLocaleDateString()}</div>
+                  </div>
+                  <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono uppercase ${
+                    i.role === "admin" ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+                  }`}>
+                    {i.role === "admin" && <Shield className="w-2 h-2" />}
+                    {i.role}
+                  </div>
+                  {isAdmin && (
+                    <button
+                      onClick={() => revokeInvitation(i.id)}
+                      className="p-1 rounded text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                      title="Revoke invitation"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

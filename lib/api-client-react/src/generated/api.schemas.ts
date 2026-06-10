@@ -18,6 +18,30 @@ export const AstroEventEventType = {
   FRB: 'FRB',
 } as const;
 
+/**
+ * Normalised alert lifecycle state
+ */
+export type AstroEventLifecycle = typeof AstroEventLifecycle[keyof typeof AstroEventLifecycle];
+
+
+export const AstroEventLifecycle = {
+  preliminary: 'preliminary',
+  initial: 'initial',
+  update: 'update',
+  confirmed: 'confirmed',
+} as const;
+
+/**
+ * IceCube classification tier
+ */
+export type AstroEventClassificationTier = typeof AstroEventClassificationTier[keyof typeof AstroEventClassificationTier] | null;
+
+
+export const AstroEventClassificationTier = {
+  GOLD: 'GOLD',
+  BRONZE: 'BRONZE',
+} as const;
+
 export interface AstroEvent {
   id: string;
   /** Human-readable event ID (e.g. GRB260503A) */
@@ -59,6 +83,12 @@ export interface AstroEvent {
   /** System latency in microseconds */
   latencyUs: number;
   createdAt: string;
+  /** Normalised alert lifecycle state */
+  lifecycle: AstroEventLifecycle;
+  /** Raw alert_type string from originating source (e.g. PRELIMINARY, RETRACTION) */
+  alertType?: string | null;
+  /** IceCube classification tier */
+  classificationTier?: AstroEventClassificationTier;
 }
 
 export interface EventListResponse {

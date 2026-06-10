@@ -10,7 +10,7 @@ const router = Router();
 // GET /team — any authenticated researcher
 router.get("/team", requireAuth, async (req, res) => {
   const actor = (req as Request & { user: AuthPayload }).user;
-  
+
   // Get actor's lab (assuming first lab for simplicity, or should join)
   const [actorMember] = await db.select().from(labMembers).where(eq(labMembers.userId, actor.userId as any)).limit(1);
   if (!actorMember) {
@@ -32,17 +32,19 @@ router.get("/team", requireAuth, async (req, res) => {
     .where(eq(labMembers.labId, actorMember.labId))
     .orderBy(labMembers.joinedAt);
 
-  res.json({ members: members.map(m => ({
-    ...m,
-    id: String(m.id) // Convert BigInt to string for JSON serialization
-  })) });
+  res.json({
+    members: members.map(m => ({
+      ...m,
+      id: String(m.id) // Convert BigInt to string for JSON serialization
+    }))
+  });
 });
 
 // POST /team — admin only
 router.post("/team", requireAdmin, async (req, res) => {
   const actor = (req as Request & { user: AuthPayload }).user;
   const { email, name, role } = req.body as { email?: string; name?: string; role?: string };
-  
+
   if (!email) {
     res.status(400).json({ error: "email is required" });
     return;
@@ -51,9 +53,9 @@ router.post("/team", requireAdmin, async (req, res) => {
     res.status(400).json({ error: "Invalid email format" });
     return;
   }
-  
+
   const validRole = role === "admin" ? "admin" : "researcher";
-  
+
   const [actorMember] = await db.select().from(labMembers).where(eq(labMembers.userId, actor.userId as any)).limit(1);
   if (!actorMember) {
     res.status(403).json({ error: "Actor is not in a lab" });
@@ -61,7 +63,7 @@ router.post("/team", requireAdmin, async (req, res) => {
   }
 
   const targetEmail = email.toLowerCase();
-  
+
   // Find or create user
   let [targetUser] = await db.select().from(users).where(eq(users.email, targetEmail)).limit(1);
   if (!targetUser) {
@@ -77,7 +79,7 @@ router.post("/team", requireAdmin, async (req, res) => {
   const existing = await db.select().from(labMembers)
     .where(and(eq(labMembers.userId, targetUser.id), eq(labMembers.labId, actorMember.labId)))
     .limit(1);
-    
+
   if (existing.length > 0) {
     res.status(409).json({ error: "Member already on team" });
     return;
@@ -92,7 +94,7 @@ router.post("/team", requireAdmin, async (req, res) => {
     })
     .returning();
 
-  res.status(201).json({ 
+  res.status(201).json({
     member: {
       id: String(member.id),
       userId: targetUser.id,
@@ -100,7 +102,7 @@ router.post("/team", requireAdmin, async (req, res) => {
       name: targetUser.name,
       role: member.role,
       createdAt: member.joinedAt
-    } 
+    }
   });
 });
 
@@ -111,7 +113,7 @@ router.delete("/team/:id", requireAdmin, async (req, res) => {
     res.status(400).json({ error: "Invalid id" });
     return;
   }
-  
+
   let id: bigint;
   try {
     id = BigInt(idStr);
@@ -129,3 +131,4 @@ router.delete("/team/:id", requireAdmin, async (req, res) => {
 });
 
 export default router;
+

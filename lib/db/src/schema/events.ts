@@ -97,6 +97,25 @@ export const events = coreSchema.table("events", {
   sourceCatalogId: text("source_catalog_id"),
   gcnUrl: text("gcn_url"),
   status: text("status").notNull().default("preliminary"),
+  // Alert filtering metadata
+  /** Normalized lifecycle state: preliminary | initial | update | confirmed */
+  lifecycle: text("lifecycle").notNull().default("preliminary"),
+  /** Raw alert_type string from the originating source (e.g. "PRELIMINARY", "RETRACTION") */
+  alertType: text("alert_type"),
+  /** IceCube classification tier: GOLD or BRONZE */
+  classificationTier: text("classification_tier"),
+  /** Source observatory / instrument name (e.g. "Swift", "LIGO-Hanford") */
+  observatory: text("observatory").notNull().default("Unknown"),
+  /** True when this alert is a retraction of a prior event */
+  isRetraction: boolean("is_retraction").notNull().default(false),
+  /** Origin of this row: 'kafka' (live GCN alert) | 'bootstrap' (seed from recent_events.json) */
+  source: text("source").notNull().default("kafka"),
+  /** True for rows inserted by the startup bootstrap — never overwritten by Kafka upserts */
+  isHistorical: boolean("is_historical").notNull().default(false),
+  /** How many times this row has been updated by a newer notice (0 = first notice only) */
+  revisionCount: integer("revision_count").notNull().default(0),
+  /** alert_type of the most-recently processed notice (e.g. "INITIAL", "UPDATE") */
+  latestRevision: text("latest_revision"),
   ingestedBy: uuid("ingested_by").references(() => users.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

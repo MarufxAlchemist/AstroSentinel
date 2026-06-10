@@ -11,7 +11,7 @@ function formatEvent(row: typeof eventsTable.$inferSelect) {
     id: String(row.id),
     eventId: row.eventId,
     eventType: row.eventType,
-    observatory: "Unknown",
+    observatory: row.observatory ?? "Unknown",
     detectionTime: row.detectionTime.toISOString(),
     ra: row.ra,
     dec: row.dec,
@@ -30,6 +30,12 @@ function formatEvent(row: typeof eventsTable.$inferSelect) {
     moonDistance: row.moonDistance,
     latencyUs: String(row.latencyUs),
     createdAt: row.createdAt.toISOString(),
+    // Alert filtering metadata
+    lifecycle: (row.lifecycle ?? "preliminary") as "preliminary" | "initial" | "update" | "confirmed",
+    alertType: row.alertType ?? undefined,
+    classificationTier: (row.classificationTier ?? undefined) as "GOLD" | "BRONZE" | undefined,
+    isHistorical: row.isHistorical ?? false,
+    source:       row.source       ?? "kafka",
   };
 }
 

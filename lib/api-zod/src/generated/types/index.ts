@@ -7,7 +7,9 @@
  */
 
 export * from './astroEvent';
+export * from './astroEventClassificationTier';
 export * from './astroEventEventType';
+export * from './astroEventLifecycle';
 export * from './eventListResponse';
 export * from './eventStats';
 export * from './eventStatsByObservatoryItem';

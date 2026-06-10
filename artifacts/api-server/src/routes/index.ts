@@ -3,6 +3,10 @@ import healthRouter from "./health";
 import eventsRouter from "./events";
 import authRouter from "./auth";
 import teamRouter from "./team";
+import notesRouter from "./notes";
+import discussionsRouter from "./discussions";
+import bookmarksRouter from "./bookmarks";
+import filterReportRouter from "./filterReport";
 
 const router: IRouter = Router();
 
@@ -10,5 +14,9 @@ router.use(healthRouter);
 router.use(eventsRouter);
 router.use(authRouter);
 router.use(teamRouter);
+router.use(notesRouter);
+router.use(discussionsRouter);
+router.use(bookmarksRouter);
+router.use(filterReportRouter);
 
 export default router;

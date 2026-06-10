@@ -29,6 +29,12 @@ interface AlertMessage extends BaseMessage {
   notification: RawNotification;
 }
 
+interface EventUpdatedMessage extends BaseMessage {
+  type: "event_updated";
+  sequence: number;
+  event: RawEvent;
+}
+
 interface HeartbeatMessage extends BaseMessage {
   type: "heartbeat";
   listener_alive: boolean;
@@ -74,6 +80,7 @@ interface ErrorMessage extends BaseMessage {
 type ServerMessage =
   | ConnectionAckMessage
   | AlertMessage
+  | EventUpdatedMessage
   | HeartbeatMessage
   | HistoryStartMessage
   | HistoryEventMessage
@@ -105,6 +112,13 @@ interface RawEvent {
   fluence: number | null;
   dm: number | null;
   raw: any;
+  // Alert filtering metadata
+  lifecycle?: "preliminary" | "initial" | "update" | "confirmed";
+  alertType?: string | null;
+  latestRevision?: string | null;
+  revisionCount?: number;
+  classificationTier?: "GOLD" | "BRONZE" | null;
+  updatedAt?: string;
 }
 
 interface RawNotification {
@@ -121,23 +135,27 @@ interface RawNotification {
 
 function toAstroEvent(raw: RawEvent): AstroEvent {
   return {
-    id:            raw.id,
-    eventId:       raw.eventId,
-    eventType:     raw.eventType as AstroEvent["eventType"],
-    observatory:   raw.observatory,
-    detectionTime: raw.detectionTime,
-    ra:            raw.ra,
-    dec:           raw.dec,
-    errorRadius:   raw.errorRadius,
-    snr:           raw.snr,
-    far:           raw.far,
-    latencyUs:     raw.latencyUs,
-    galLon:        raw.galLon,
-    galLat:        raw.galLat,
-    sunDistance:   raw.sunDistance,
-    moonDistance:  raw.moonDistance,
-    fluence:       raw.fluence ?? null,
-    dm:            raw.dm ?? null,
+    id:                 raw.id,
+    eventId:            raw.eventId,
+    eventType:          raw.eventType as AstroEvent["eventType"],
+    observatory:        raw.observatory,
+    detectionTime:      raw.detectionTime,
+    ra:                 raw.ra,
+    dec:                raw.dec,
+    errorRadius:        raw.errorRadius,
+    snr:                raw.snr,
+    far:                raw.far,
+    latencyUs:          raw.latencyUs,
+    galLon:             raw.galLon,
+    galLat:             raw.galLat,
+    sunDistance:        raw.sunDistance,
+    moonDistance:       raw.moonDistance,
+    fluence:            raw.fluence ?? null,
+    dm:                 raw.dm     ?? null,
+    // Alert filtering metadata — fall back gracefully for older server versions
+    lifecycle:          raw.lifecycle ?? "preliminary",
+    alertType:          raw.alertType ?? undefined,
+    classificationTier: raw.classificationTier ?? undefined,
   } as AstroEvent;
 }
 
@@ -283,7 +301,8 @@ export function useAstroWebSocket(): UseAstroWebSocketResult {
         lastSequenceRef.current = msg.sequence;
 
         setEvents(prev => {
-          if (prev.some(e => e.id === event.id)) return prev;
+          // Dedup by eventId — prevents duplicates if reconnect replays same event
+          if (prev.some(e => e.eventId === event.eventId)) return prev;
           return [event, ...prev].slice(0, 100);
         });
 
@@ -305,6 +324,23 @@ export function useAstroWebSocket(): UseAstroWebSocketResult {
             sequence: msg.sequence
           });
         }
+        break;
+      }
+
+      case "event_updated": {
+        // A later notice arrived for an existing event — update the card in place.
+        const updated = toAstroEvent(msg.event);
+        setEvents(prev => {
+          const idx = prev.findIndex(e => e.eventId === updated.eventId);
+          if (idx === -1) {
+            // Event not in memory yet (e.g. page loaded after PRELIMINARY was sent)
+            // — treat it as a new card.
+            return [updated, ...prev].slice(0, 100);
+          }
+          const next = [...prev];
+          next[idx] = updated;
+          return next;
+        });
         break;
       }
 

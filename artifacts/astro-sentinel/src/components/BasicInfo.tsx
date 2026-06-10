@@ -21,8 +21,8 @@ const EXTERNAL_LINKS = [
 
 export function BasicInfo({ event }: Props) {
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex-1 overflow-y-auto scrollbar-thin p-3 space-y-0.5">
+    <div className="flex flex-col">
+      <div className="p-3 space-y-0.5">
         <Row label="Event ID" value={event.eventId} />
         <Row label="Type" value={event.eventType === "GRB" ? "Gamma-ray burst" : event.eventType === "GW" ? "Gravitational wave" : "Fast radio burst"} />
         <Row label="Date [UTC]" value={formatMicrosecondDate(event.detectionTime).slice(0, 19).replace("T", " ")} />

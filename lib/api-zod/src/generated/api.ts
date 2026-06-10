@@ -53,7 +53,10 @@ export const ListEventsResponse = zod.object({
   "sunDistance": zod.number().describe('Angular distance from Sun (degrees)'),
   "moonDistance": zod.number().describe('Angular distance from Moon (degrees)'),
   "latencyUs": zod.number().describe('System latency in microseconds'),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "lifecycle": zod.enum(['preliminary', 'initial', 'update', 'confirmed']).describe('Normalised alert lifecycle state'),
+  "alertType": zod.string().nullish().describe('Raw alert_type string from originating source (e.g. PRELIMINARY, RETRACTION)'),
+  "classificationTier": zod.enum(['GOLD', 'BRONZE']).nullish().describe('IceCube classification tier')
 })),
   "total": zod.number()
 })
@@ -96,7 +99,10 @@ export const GetEventStatsResponse = zod.object({
   "sunDistance": zod.number().describe('Angular distance from Sun (degrees)'),
   "moonDistance": zod.number().describe('Angular distance from Moon (degrees)'),
   "latencyUs": zod.number().describe('System latency in microseconds'),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "lifecycle": zod.enum(['preliminary', 'initial', 'update', 'confirmed']).describe('Normalised alert lifecycle state'),
+  "alertType": zod.string().nullish().describe('Raw alert_type string from originating source (e.g. PRELIMINARY, RETRACTION)'),
+  "classificationTier": zod.enum(['GOLD', 'BRONZE']).nullish().describe('IceCube classification tier')
 }).nullish()
 })
 
@@ -130,7 +136,10 @@ export const GetEventResponse = zod.object({
   "sunDistance": zod.number().describe('Angular distance from Sun (degrees)'),
   "moonDistance": zod.number().describe('Angular distance from Moon (degrees)'),
   "latencyUs": zod.number().describe('System latency in microseconds'),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "lifecycle": zod.enum(['preliminary', 'initial', 'update', 'confirmed']).describe('Normalised alert lifecycle state'),
+  "alertType": zod.string().nullish().describe('Raw alert_type string from originating source (e.g. PRELIMINARY, RETRACTION)'),
+  "classificationTier": zod.enum(['GOLD', 'BRONZE']).nullish().describe('IceCube classification tier')
 })
 
 

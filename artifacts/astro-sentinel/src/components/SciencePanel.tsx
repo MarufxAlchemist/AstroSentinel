@@ -62,8 +62,9 @@ export function SciencePanel({ event }: Props) {
         </button>
       </div>
 
-      <div className="relative z-0 flex-1 overflow-hidden p-3 space-y-3">
-        <div className="flex items-center justify-between gap-3">
+      <div className="relative z-0 flex-1 overflow-hidden flex flex-col p-3 gap-3">
+        {/* Priority header is always visible */}
+        <div className="flex items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Priority</span>
             <PriorityBadge event={event} />
@@ -71,26 +72,45 @@ export function SciencePanel({ event }: Props) {
           <div className="text-[9px] font-mono text-muted-foreground">Latency {event.latencyUs} μs</div>
         </div>
 
-        <ScientificSummary event={event} />
-        <EventTimeline event={event} />
-        <DerivedParameters event={event} />
+        {activeTab === "basic" && (
+          <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin pr-1 space-y-3">
+            <ScientificSummary event={event} />
+            <EventTimeline event={event} />
+            <DerivedParameters event={event} />
 
-        <div className="flex items-center gap-2 rounded border border-border bg-card px-3 py-2 text-[9px] font-mono text-muted-foreground">
-          <span>Pipeline</span>
-          <span className="text-foreground">PENDING</span>
-        </div>
+            <div className="flex items-center gap-2 rounded border border-border bg-card px-3 py-2 text-[9px] font-mono text-muted-foreground">
+              <span>Pipeline</span>
+              <span className="text-foreground">PENDING</span>
+            </div>
 
-        <div className="flex-1 min-h-0 overflow-hidden rounded border border-border bg-card">
-          {activeTab === "basic" && <BasicInfo event={event} />}
-          {activeTab === "skymap" && <SkyMap events={[event]} selectedEvent={event} />}
-          {activeTab === "lightcurves" && <Lightcurves event={event} />}
-          {activeTab === "spectral" && (
-            <div className="flex flex-col h-full gap-3 p-3 overflow-hidden">
+            <div className="rounded border border-border bg-card">
+              <BasicInfo event={event} />
+            </div>
+          </div>
+        )}
+
+        {activeTab === "skymap" && (
+          <div className="flex-1 min-h-0 rounded border border-border bg-card overflow-hidden">
+            <SkyMap events={[event]} selectedEvent={event} />
+          </div>
+        )}
+
+        {activeTab === "lightcurves" && (
+          <div className="flex-1 min-h-0 rounded border border-border bg-card overflow-hidden">
+            <Lightcurves event={event} />
+          </div>
+        )}
+
+        {activeTab === "spectral" && (
+          <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden">
+            <div className="flex-1 min-h-0 rounded border border-border bg-card overflow-hidden">
               <SpectralFit event={event} />
+            </div>
+            <div className="flex-1 min-h-0 rounded border border-border bg-card overflow-hidden">
               <SpectralComparison event={event} />
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { Telescope, Lock, Mail, User, AlertCircle } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
+import { GoogleLogin } from "@react-oauth/google";
 
 type Mode = "login" | "register";
 
@@ -20,6 +21,49 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const [, navigate] = useLocation();
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    if (code) {
+      // Clear the code from URL to prevent replay on refresh
+      window.history.replaceState({}, document.title, window.location.pathname);
+      
+      setLoading(true);
+      setError("");
+      const redirectUri = window.location.origin + "/login";
+      
+      fetch("/api/auth/orcid", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, redirectUri }),
+      })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) {
+          setError(data.error ?? "ORCID authentication failed");
+          setLoading(false);
+          return;
+        }
+        login(data.token, { userId: data.user.id, email: data.user.email, name: data.user.name, role: data.user.role });
+        navigate("/");
+      })
+      .catch(() => {
+        setError("Network error during ORCID callback");
+        setLoading(false);
+      });
+    }
+  }, [login, navigate]);
+
+  function handleOrcidLogin() {
+    const clientId = import.meta.env.VITE_ORCID_CLIENT_ID;
+    if (!clientId) {
+      setError("ORCID client ID not configured");
+      return;
+    }
+    const redirectUri = encodeURIComponent(window.location.origin + "/login");
+    window.location.href = `https://orcid.org/oauth/authorize?client_id=${clientId}&response_type=code&scope=openid%20email&redirect_uri=${redirectUri}`;
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -132,6 +176,58 @@ export default function LoginPage() {
             {loading ? "Processing…" : mode === "login" ? "Sign in" : "Create account"}
           </button>
         </form>
+
+        <div className="relative mt-5 mb-5">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-border"></div>
+          </div>
+          <div className="relative flex justify-center text-xs">
+            <span className="bg-[hsl(var(--background))] px-2 text-muted-foreground uppercase tracking-wider font-semibold">Or</span>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3 justify-center">
+          <div className="flex justify-center">
+            <GoogleLogin
+              onSuccess={async (credentialResponse) => {
+                setError("");
+                setLoading(true);
+                try {
+                  const res = await fetch("/api/auth/google", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ token: credentialResponse.credential }),
+                  });
+                  const data: ApiAuthResponse = await res.json();
+                  if (!res.ok) {
+                    setError(data.error ?? "Google authentication failed");
+                    return;
+                  }
+                  login(data.token, { userId: data.user.id, email: data.user.email, name: data.user.name, role: data.user.role });
+                  navigate("/");
+                } catch {
+                  setError("Network error — check your connection");
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              onError={() => setError("Google authentication failed")}
+              theme="filled_blue"
+              shape="rectangular"
+              text={mode === "login" ? "signin_with" : "signup_with"}
+            />
+          </div>
+
+          <button
+             type="button"
+             onClick={handleOrcidLogin}
+             disabled={loading}
+             className="w-full flex items-center justify-center gap-2 py-2 border border-border rounded bg-card hover:bg-accent transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+             <img src="https://orcid.org/assets/vectors/orcid.logo.icon.svg" alt="ORCID" className="w-4 h-4" />
+             <span className="text-sm font-semibold text-foreground">Continue with ORCID</span>
+          </button>
+        </div>
 
         {mode === "register" && (
           <p className="mt-4 text-center text-[10px] text-muted-foreground leading-relaxed">

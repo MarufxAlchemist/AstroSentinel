@@ -67,6 +67,7 @@
 }
 
 :root {
+  color-scheme: light;
   /* Light mode — cozy warm beige palette */
   --button-outline: rgba(80,50,20,.08);
   --badge-outline: rgba(80,50,20,.05);
@@ -137,6 +138,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --button-outline: rgba(255,255,255,.08);
   --badge-outline: rgba(255,255,255,.05);
   --opaque-button-border-intensity: 9;
@@ -251,9 +253,24 @@
   .border.active-elevate:not(.no-active-interaction-elevate)::after,
   .border.hover-elevate-2:not(.no-hover-interaction-elevate)::after,
   .border.active-elevate-2:not(.no-active-interaction-elevate)::after { inset: -1px; }
+}
 
-  .scrollbar-thin::-webkit-scrollbar { width: 4px; }
-  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
-  .scrollbar-thin::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 2px; }
-  .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+/* Custom Scrollbar Styles */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar { 
+  width: 6px; 
+  height: 6px; 
+}
+.scrollbar-thin::-webkit-scrollbar-track { 
+  background: transparent; 
+}
+.scrollbar-thin::-webkit-scrollbar-thumb { 
+  background: hsl(var(--border)); 
+  border-radius: 3px; 
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover { 
+  background: hsl(var(--muted-foreground)); 
 }

@@ -4,6 +4,7 @@ import {
   text,
   boolean,
   integer,
+  bigint,
   bigserial,
   jsonb,
   timestamp,
@@ -60,11 +61,27 @@ export const labInvitations = tenantSchema.table("lab_invitations", {
 export type LabInvitation = typeof labInvitations.$inferSelect;
 export type InsertLabInvitation = typeof labInvitations.$inferInsert;
 
+// ─── tenant.event_bookmarks ──────────────────────────────────────────────────
+// Cross-schema FK (tenant → core.events) enforced via raw migration SQL.
+
+export const eventBookmarks = tenantSchema.table("event_bookmarks", {
+  id:        bigserial("id", { mode: "bigint" }).primaryKey(),
+  userId:    uuid("user_id").notNull(),          // FK → identity.users via migration
+  labId:     uuid("lab_id").notNull().references(() => labs.id, { onDelete: "cascade" }),
+  eventId:   bigint("event_id", { mode: "bigint" }).notNull(), // FK → core.events via migration
+  note:      text("note"),                       // optional personal note on the bookmark
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type EventBookmark = typeof eventBookmarks.$inferSelect;
+export type InsertEventBookmark = typeof eventBookmarks.$inferInsert;
+
 // ─── Relations ───────────────────────────────────────────────────────────────
 
 export const labsRelations = relations(labs, ({ many }) => ({
   members:     many(labMembers),
   invitations: many(labInvitations),
+  bookmarks:   many(eventBookmarks),
 }));
 
 export const labMembersRelations = relations(labMembers, ({ one }) => ({
@@ -73,5 +90,9 @@ export const labMembersRelations = relations(labMembers, ({ one }) => ({
 
 export const labInvitationsRelations = relations(labInvitations, ({ one }) => ({
   lab: one(labs, { fields: [labInvitations.labId], references: [labs.id] }),
+}));
+
+export const eventBookmarksRelations = relations(eventBookmarks, ({ one }) => ({
+  lab: one(labs, { fields: [eventBookmarks.labId], references: [labs.id] }),
 }));
 

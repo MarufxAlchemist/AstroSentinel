@@ -176,6 +176,19 @@ components:
           description: System latency in microseconds
         createdAt:
           type: string
+        lifecycle:
+          type: string
+          enum: [preliminary, initial, update, confirmed]
+          description: Normalised alert lifecycle state
+        alertType:
+          type: string
+          nullable: true
+          description: Raw alert_type string from originating source (e.g. PRELIMINARY, RETRACTION)
+        classificationTier:
+          type: string
+          enum: [GOLD, BRONZE]
+          nullable: true
+          description: IceCube classification tier
       required:
         - id
         - eventId
@@ -193,6 +206,7 @@ components:
         - moonDistance
         - latencyUs
         - createdAt
+        - lifecycle
 
     EventListResponse:
       type: object

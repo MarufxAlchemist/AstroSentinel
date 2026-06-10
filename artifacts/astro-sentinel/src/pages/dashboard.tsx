@@ -81,8 +81,21 @@ function TimelineBar({ events = [] }: { events?: AstroEvent[] }) {
   );
 }
 
+function lifecycleBadge(lifecycle?: string) {
+  switch (lifecycle) {
+    case "initial":   return { label: "INITIAL",   cls: "bg-blue-500/15 text-blue-400 border-blue-500/40" };
+    case "update":    return { label: "UPDATE",     cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" };
+    case "confirmed": return { label: "CONFIRMED",  cls: "bg-emerald-500/15 text-emerald-400 border-emerald-500/40" };
+    default:          return { label: "PRELIM",     cls: "bg-zinc-500/10 text-zinc-400 border-zinc-500/30" };
+  }
+}
+
 function SidebarItem({ event, selected, isNew, onClick, scienceMode }: { event: AstroEvent; selected: boolean; isNew: boolean; onClick: () => void; scienceMode: boolean; }) {
   const c = typeColor(event.eventType);
+  const lc = lifecycleBadge((event as any).lifecycle);
+  const tier          = (event as any).classificationTier as "GOLD" | "BRONZE" | undefined;
+  const revisionCount = (event as any).revisionCount as number | undefined;
+  const isHistorical  = (event as any).isHistorical  as boolean | undefined;
   return (
     <div onClick={onClick} className={`flex items-center gap-2.5 px-2.5 cursor-pointer transition-all border-l-2 ${scienceMode ? "py-2.5" : "py-2"} ${selected ? `bg-primary/10 border-l-primary` : `border-l-transparent hover:bg-accent/50`} ${isNew ? "animate-in fade-in slide-in-from-top-2 duration-400" : ""}`}>
       <div className={`w-9 h-9 rounded-md border ${c.border} ${c.bg} flex items-center justify-center shrink-0`}>
@@ -91,6 +104,38 @@ function SidebarItem({ event, selected, isNew, onClick, scienceMode }: { event: 
       <div className="min-w-0 flex-1">
         <div className="font-mono text-xs font-bold text-foreground truncate">{event.eventId}</div>
         <div className={`text-[10px] ${c.text} truncate`}>{typeLabel(event.eventType)}</div>
+        {/* Lifecycle + tier + historical + revision badges */}
+        <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+          <span className={`inline-flex items-center px-1.5 py-px text-[8px] font-mono font-semibold rounded border ${lc.cls} leading-none`}>
+            {lc.label}
+          </span>
+          {tier === "GOLD" && (
+            <span className="inline-flex items-center px-1.5 py-px text-[8px] font-mono font-semibold rounded border bg-yellow-400/15 text-yellow-300 border-yellow-400/40 leading-none">
+              GOLD
+            </span>
+          )}
+          {tier === "BRONZE" && (
+            <span className="inline-flex items-center px-1.5 py-px text-[8px] font-mono font-semibold rounded border bg-orange-700/15 text-orange-400 border-orange-600/40 leading-none">
+              BRONZE
+            </span>
+          )}
+          {isHistorical && (
+            <span
+              className="inline-flex items-center px-1.5 py-px text-[8px] font-mono font-semibold rounded border bg-stone-500/10 text-stone-400 border-stone-500/30 leading-none"
+              title="Historical event loaded at startup — not a live Kafka alert"
+            >
+              Historical
+            </span>
+          )}
+          {revisionCount !== undefined && revisionCount > 0 && (
+            <span
+              className="inline-flex items-center px-1.5 py-px text-[8px] font-mono font-semibold rounded border bg-violet-500/10 text-violet-400 border-violet-500/30 leading-none"
+              title={`Updated ${revisionCount} time${revisionCount === 1 ? "" : "s"} by follow-up notices`}
+            >
+              rev {revisionCount}
+            </span>
+          )}
+        </div>
         {scienceMode && (
           <div className="mt-0.5 grid grid-cols-2 gap-x-1 text-[9px] font-mono text-muted-foreground">
             <span>RA {event.ra.toFixed(1)}°</span>
@@ -289,7 +334,17 @@ export default function Dashboard() {
   
   const liveIds = useMemo(() => new Set(Array.isArray(liveEvents) ? liveEvents.map(e => e.id) : []), [liveEvents]);
   const SIDEBAR_LIMIT = 50;
-  const sidebarEvents = useMemo(() => allEvents.slice(0, SIDEBAR_LIMIT), [allEvents]);
+
+  // Display-only filter — does not affect DB or allEvents state.
+  // INITIAL and UPDATE are intermediate notices; the sidebar shows only the
+  // first (PRELIMINARY) and final (CONFIRMED) state of each event.
+  const VISIBLE_LIFECYCLES = new Set(["preliminary", "confirmed"]);
+  const sidebarEvents = useMemo(
+    () => allEvents
+      .filter(e => VISIBLE_LIFECYCLES.has((e as any).lifecycle ?? "preliminary"))
+      .slice(0, SIDEBAR_LIMIT),
+    [allEvents],
+  );
   React.useEffect(() => {
     if (!selectedEvent && allEvents.length > 0) {
       setSelectedEvent(allEvents[0]);

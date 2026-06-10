@@ -1,15 +1,19 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { useParams, Link } from "wouter";
 import { useGetEvent, getGetEventQueryKey } from "@workspace/api-client-react";
 import { EventBadge } from "@/components/EventBadge";
 import { formatMicrosecondDate, formatLatency } from "@/lib/formatters";
-import { ArrowLeft, Target, Map, Activity, Clock, Zap, Database } from "lucide-react";
+import { ArrowLeft, Target, Map, Activity, Clock, Zap, Database, FlaskConical, Bookmark, BookmarkCheck } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SkyMap } from "@/components/SkyMap";
+import { useAuth } from "@/lib/AuthContext";
 
 export default function EventDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const { token } = useAuth();
+  const [bookmarked, setBookmarked] = useState(false);
+  const [bookmarkLoading, setBookmarkLoading] = useState(false);
 
   const { data: event, isLoading } = useGetEvent(id, {
     query: {
@@ -17,6 +21,34 @@ export default function EventDetailPage() {
       queryKey: getGetEventQueryKey(id)
     }
   });
+
+  // Check bookmark status once event is loaded
+  useEffect(() => {
+    if (!token || !event?.id) return;
+    fetch(`/api/events/${event.id}/bookmark`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((data: { bookmarked?: boolean }) => setBookmarked(!!data.bookmarked))
+      .catch(() => {});
+  }, [token, event?.id]);
+
+  async function toggleBookmark() {
+    if (!token || !event?.id || bookmarkLoading) return;
+    setBookmarkLoading(true);
+    try {
+      const method = bookmarked ? "DELETE" : "POST";
+      await fetch(`/api/events/${event.id}/bookmark`, {
+        method,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setBookmarked((v) => !v);
+    } catch {
+      // silent
+    } finally {
+      setBookmarkLoading(false);
+    }
+  }
 
   if (isLoading) {
     return (
@@ -60,7 +92,7 @@ export default function EventDetailPage() {
             {formatMicrosecondDate(event.detectionTime)}
           </div>
         </div>
-        <div className="flex items-center gap-6 text-sm">
+        <div className="flex flex-wrap items-center gap-4 text-sm">
           <div className="flex flex-col items-end">
             <span className="text-muted-foreground uppercase text-xs tracking-wider">Observatory</span>
             <span className="font-mono font-bold text-primary">{event.observatory}</span>
@@ -70,6 +102,30 @@ export default function EventDetailPage() {
             <span className="text-muted-foreground uppercase text-xs tracking-wider">Latency</span>
             <span className="font-mono">{formatLatency(event.latencyUs)}</span>
           </div>
+          <div className="h-10 w-px bg-border"></div>
+          <button
+            onClick={toggleBookmark}
+            disabled={bookmarkLoading}
+            title={bookmarked ? "Remove bookmark" : "Bookmark this event"}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-xs font-semibold transition-colors disabled:opacity-50 ${
+              bookmarked
+                ? "bg-primary/20 border-primary/50 text-primary hover:bg-primary/10"
+                : "bg-card border-border text-muted-foreground hover:text-foreground hover:border-border"
+            }`}
+          >
+            {bookmarked
+              ? <BookmarkCheck className="w-3.5 h-3.5" />
+              : <Bookmark className="w-3.5 h-3.5" />}
+            {bookmarked ? "Bookmarked" : "Bookmark"}
+          </button>
+          <div className="h-10 w-px bg-border"></div>
+          <Link
+            href={`/events/${event.id}/workspace`}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary/10 border border-primary/30 text-primary text-xs font-semibold hover:bg-primary/20 transition-colors"
+          >
+            <FlaskConical className="w-3.5 h-3.5" />
+            Open Research Workspace
+          </Link>
         </div>
       </div>
 

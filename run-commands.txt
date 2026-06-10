@@ -1,14 +1,71 @@
-----------------------------------FOR BACKEND---------------------------------------
+==================================== RUN ORDER =====================================
+
+Start services in this order:
+  1. Python backend (GCN Kafka consumer)   → Terminal 1
+  2. Node.js api-server (Express + WS)     → Terminal 2
+  3. Frontend (Vite)                       → Terminal 3
+
+IMPORTANT: Use a SEPARATE terminal for each service.
+           Stop cleanly with Ctrl+C before restarting — do NOT close the window
+           without stopping, or the port will stay blocked (WinError 10013).
+
+If you get "WinError 10013" (port already in use), run:
+  netstat -ano | findstr ":8001"     ← find the PID
+  taskkill /F /PID <PID>             ← kill it
+
+==================================== TERMINAL 1 — PYTHON BACKEND ====================================
+
+cd "E:\Maruf data\Antigravity\Cosmic-Alert-System\backend"
+
+.\venv\Scripts\Activate.ps1
+
+uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+
+# First time only:
+# pip install -r requirements.txt
+
+Expected output:
+  INFO:     Started server process [XXXX]
+  INFO:     Application startup complete.
+  INFO:     Uvicorn running on http://0.0.0.0:8001
+
+When Kafka alerts arrive:
+  [kafka] Background listener started
+  [heartbeat] Sending every 30s
+  [consumer] Broadcasted alert topic=igwn.gwalert event_id=... type=GW
+
+==================================== TERMINAL 2 — NODE.JS API SERVER ====================================
 
 cd "E:\Maruf data\Antigravity\Cosmic-Alert-System\artifacts\api-server"
 
 $env:DATABASE_URL="postgresql://postgres:Maruf%40788824@localhost:5432/Astro-sentinel"
 $env:PORT="8000"
+$env:JWT_SECRET="AstroSentinelSecret"
+$env:PYTHON_BACKEND_URL="ws://localhost:8001/api/ws"
 
 pnpm dev
 
-----------------------------------FOR FRONTEND---------------------------------------
+Expected output:
+  [SIMULATOR DISABLED] startIngestion() called but is a no-op.
+  [kafka-bridge] Starting GCN Kafka consumer bridge
+  [kafka-bridge] Connecting to Python GCN Kafka backend...
+  [kafka-bridge] ✓ Connected to Python GCN Kafka backend
+  [kafka-bridge] ✓ Topics subscribed: igwn.gwalert, gcn.notices.chime.frb, ...
+  [kafka-bridge] Python backend connection_ack received — Kafka consumer running
+
+When a real Kafka alert is received and broadcast to frontend:
+  [kafka-bridge] ✓ Real Kafka alert received → persisting + broadcasting
+  Broadcasted event to WS clients
+
+==================================== TERMINAL 3 — FRONTEND ====================================
 
 cd "E:\Maruf data\Antigravity\Cosmic-Alert-System\artifacts\astro-sentinel"
 
 pnpm dev
+
+======================================================================================================
+
+Auth Token (for API testing):
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIyMDJkMjVmOC02NzQ1LTRkNDYtODc5NC00ZWNlM2ZjM2MwYWQiLCJlbWFpbCI6Im1hcnVmQHRlc3QuY29tIiwicm9sZSI6ImFkbWluIiwiaWF0IjoxNzgwOTI2NzcxLCJleHAiOjE3ODE1MzE1NzF9.1xJyOelBCKkVlwk0ZvZRxxcoNM67pLLcIMzZuVoV-Yg
+
+======================================================================================================
