@@ -26,7 +26,7 @@ def _now_iso() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Kafka poll — runs in thread executor so it never blocks the event loop
+# Kafka poll — runs in thread executor so it never blocks the event loop.
 # ---------------------------------------------------------------------------
 
 def _sync_consume(timeout: float) -> list:
