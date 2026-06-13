@@ -18,7 +18,7 @@ from app.gcn.consumer import consumer, process_alert
 from app.websocket.manager import manager
 
 HEARTBEAT_INTERVAL_S = 30
-KAFKA_POLL_TIMEOUT_S = 1.0  # passed to consumer.consume()
+KAFKA_POLL_TIMEOUT_S = 1.0  # passed to the consumer.consume()
 
 
 def _now_iso() -> str:
