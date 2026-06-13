@@ -8,7 +8,7 @@ Runs two concurrent asyncio tasks:
                    process_alert for each valid message
 
 2. _heartbeat_loop — sends a WebSocket heartbeat every 30 seconds so
-                     clients can detect a dead listener without a TCP drop.
+                     clients can detect a dead listener without a TCP drop
 """
 
 import asyncio
