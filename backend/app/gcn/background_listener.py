@@ -57,7 +57,7 @@ async def _kafka_loop() -> None:
                 continue
             await process_alert(message)
 
-        # Yield control to the event loop between poll cycles
+        # Yield control to the event loop between poll cycles.
         await asyncio.sleep(0)
 
 
