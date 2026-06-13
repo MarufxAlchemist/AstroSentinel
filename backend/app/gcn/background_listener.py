@@ -1,6 +1,6 @@
 """
 background_listener.py
------------------------
+----------------------
 Runs two concurrent asyncio tasks:
 
 1. _kafka_loop   — polls the GCN Kafka consumer in a thread-pool executor
