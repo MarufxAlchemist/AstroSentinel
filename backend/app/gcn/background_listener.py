@@ -5,7 +5,7 @@ Runs two concurrent asyncio tasks:
 
 1. _kafka_loop   — polls the GCN Kafka consumer in a thread-pool executor
                    to avoid blocking the asyncio event loop, then calls
-                   process_alert for each valid message.
+                   process_alert for each valid message
 
 2. _heartbeat_loop — sends a WebSocket heartbeat every 30 seconds so
                      clients can detect a dead listener without a TCP drop.
