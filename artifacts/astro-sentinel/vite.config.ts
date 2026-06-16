@@ -31,6 +31,11 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  // aladin-lite ships pre-bundled (WASM + web-workers); exclude it from
+  // Vite's esbuild pre-bundler so the assets are served as raw files.
+  optimizeDeps: {
+    exclude: ["aladin-lite"],
+  },
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "src"),
