@@ -7,13 +7,28 @@ import { ArrowLeft, Target, Map, Activity, Clock, Zap, Database, FlaskConical, B
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SkyMap } from "@/components/SkyMap";
+import { LocalizationPanel } from "@/components/LocalizationPanel";
+import { FitsLocalizationViewer } from "@/components/FitsLocalizationViewer";
 import { useAuth } from "@/lib/AuthContext";
+import { Network } from "lucide-react";
+
+interface Correlation {
+  id: string;
+  eventId: string;
+  eventType: string;
+  score: number;
+  angularSeparationDeg: number;
+  deltaTSeconds: number;
+}
 
 export default function EventDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { token } = useAuth();
   const [bookmarked, setBookmarked] = useState(false);
   const [bookmarkLoading, setBookmarkLoading] = useState(false);
+  const [mapView, setMapView] = useState<"skymap" | "aladin">("skymap");
+  const [correlations, setCorrelations] = useState<Correlation[]>([]);
+  const [correlationsLoading, setCorrelationsLoading] = useState(false);
 
   const { data: event, isLoading } = useGetEvent(id, {
     query: {
@@ -31,6 +46,18 @@ export default function EventDetailPage() {
       .then((r) => r.json())
       .then((data: { bookmarked?: boolean }) => setBookmarked(!!data.bookmarked))
       .catch(() => {});
+      
+    // Fetch correlations
+    setCorrelationsLoading(true);
+    fetch(`/api/events/${event.id}/correlations`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((data: Correlation[]) => {
+        if (Array.isArray(data)) setCorrelations(data);
+      })
+      .catch(() => {})
+      .finally(() => setCorrelationsLoading(false));
   }, [token, event?.id]);
 
   async function toggleBookmark() {
@@ -132,18 +159,51 @@ export default function EventDetailPage() {
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
           <Card className="bg-card border-border/50 shadow-none">
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between pb-3">
               <CardTitle className="flex items-center gap-2 text-lg">
                 <Map className="w-5 h-5 text-primary" />
                 Localization Map
               </CardTitle>
+              {/* View toggle */}
+              <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-0.5">
+                <button
+                  onClick={() => setMapView("skymap")}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                    mapView === "skymap"
+                      ? "bg-card text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  SkyMap
+                </button>
+                <button
+                  onClick={() => setMapView("aladin")}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                    mapView === "aladin"
+                      ? "bg-card text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  Aladin
+                </button>
+              </div>
             </CardHeader>
             <CardContent>
               <div className="bg-black/50 rounded-lg overflow-hidden border border-border/50">
-                <SkyMap events={[event]} />
+                {mapView === "skymap" ? (
+                  <SkyMap events={[event]} />
+                ) : (
+                  <FitsLocalizationViewer
+                    event={event}
+                    height={500}
+                  />
+                )}
               </div>
             </CardContent>
           </Card>
+
+          {/* Localization metadata panel — appears for GW events that have FITS products */}
+          <LocalizationPanel eventId={event.id} />
 
           <Card className="bg-card border-border/50 shadow-none">
             <CardHeader>
@@ -251,6 +311,54 @@ export default function EventDetailPage() {
                 <span className="text-muted-foreground">Ingested At</span>
                 <span className="font-mono">{new Date(event.createdAt).toISOString().split('T')[1].replace('Z', '')} UTC</span>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Multi-Messenger Correlations */}
+          <Card className="bg-card border-border/50 shadow-none">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Network className="w-5 h-5 text-primary" />
+                Multi-Messenger Correlations
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {correlationsLoading ? (
+                <div className="flex justify-center p-4">
+                  <span className="text-sm text-muted-foreground animate-pulse">Computing on-demand counterparts...</span>
+                </div>
+              ) : correlations.length === 0 ? (
+                <div className="flex justify-center p-4">
+                  <span className="text-sm text-muted-foreground">No strong correlations found in the vicinity.</span>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {correlations.map((corr) => (
+                    <div key={corr.id} className="flex items-center justify-between p-3 rounded-lg border border-border/50 bg-muted/20">
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <EventBadge type={corr.eventType} />
+                          <Link href={`/events/${corr.id}`} className="font-mono font-bold hover:underline">
+                            {corr.eventId}
+                          </Link>
+                        </div>
+                        <div className="text-xs text-muted-foreground flex gap-3">
+                          <span>Sep: {corr.angularSeparationDeg.toFixed(2)}&deg;</span>
+                          <span>&Delta;T: {corr.deltaTSeconds > 0 ? '+' : ''}{corr.deltaTSeconds > 86400 || corr.deltaTSeconds < -86400 ? (corr.deltaTSeconds/3600).toFixed(1) + 'h' : corr.deltaTSeconds.toFixed(1) + 's'}</span>
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end">
+                        <span className="text-xs uppercase tracking-wider text-muted-foreground">Confidence</span>
+                        <div className="flex items-center gap-2">
+                          <span className={`font-mono text-lg font-bold ${corr.score > 75 ? 'text-green-500' : 'text-amber-500'}`}>
+                            {corr.score}%
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>

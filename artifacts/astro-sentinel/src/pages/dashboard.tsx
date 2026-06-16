@@ -231,11 +231,26 @@ function RightPanel({ event }: { event: AstroEvent | null }) {
     return <div className="flex-1 flex flex-col items-center justify-center p-6 text-center"><div className="text-muted-foreground text-sm">Select an event from the list to view details</div></div>;
   }
   const summary = generateSummary(event);
+  const ra  = event.ra.toFixed(6);
+  const dec = event.dec.toFixed(6);
+  const fov = 2;
   const externalLinks = [
-    { name: "GCN", desc: "Follow link for further information.", icon: "📡" },
-    { name: "ALADIN", desc: "Displays event in an interactive sky atlas", icon: "🌌" },
-    { name: "ESASky", desc: "Displays event in an interactive sky atlas", icon: "🔭" },
-    { name: "TNS", desc: "Transient Name Server", icon: "🌟" },
+    {
+      name: "GCN", icon: "📡", desc: "Search GCN for this event",
+      href: `https://gcn.nasa.gov/circulars?query=${encodeURIComponent(event.eventId)}&startDate=&endDate=`,
+    },
+    {
+      name: "ALADIN", icon: "🌌", desc: "Displays event in an interactive sky atlas",
+      href: `https://aladin.u-strasbg.fr/AladinLite/?target=${encodeURIComponent(`${ra} ${dec}`)}&fov=${fov}&survey=P%2FDSS2%2Fcolor`,
+    },
+    {
+      name: "ESASky", icon: "🔭", desc: "Displays event in an interactive sky atlas",
+      href: `https://sky.esa.int/?target=${encodeURIComponent(`${ra} ${dec}`)}&hips=DSS2+color&fov=${fov}&cooframe=ICRSd&sci=false`,
+    },
+    {
+      name: "TNS", icon: "🌟", desc: "Transient Name Server (search)",
+      href: `https://www.wis-tns.org/search?ra=${ra}&decl=${dec}&radius=1&coords_unit=arcsec`,
+    },
   ];
   return (
     <div className="flex flex-col h-full">
@@ -262,7 +277,7 @@ function RightPanel({ event }: { event: AstroEvent | null }) {
           <span className="text-[10px] text-muted-foreground uppercase tracking-wider">External information:</span>
           <div className="flex gap-1">{[0,1,2,3].map(i => <div key={i} className={`w-1.5 h-1.5 rounded-full ${i === 0 ? 'bg-primary' : 'bg-border'}`} />)}</div>
         </div>
-        <div className="grid grid-cols-2 gap-1.5">{externalLinks.map(link => (<div key={link.name} className="flex gap-2 p-2 rounded border border-border bg-card hover:border-muted-foreground hover:bg-accent/30 transition-colors cursor-pointer"><span className="text-base leading-none shrink-0">{link.icon}</span><div><div className="text-[11px] font-semibold text-foreground">{link.name}</div><div className="text-[9px] text-muted-foreground leading-tight">{link.desc}</div></div></div>))}</div>
+        <div className="grid grid-cols-2 gap-1.5">{externalLinks.map(link => (<a key={link.name} href={link.href} target="_blank" rel="noopener noreferrer" className="flex gap-2 p-2 rounded border border-border bg-card hover:border-muted-foreground hover:bg-accent/30 transition-colors cursor-pointer no-underline"><span className="text-base leading-none shrink-0">{link.icon}</span><div><div className="text-[11px] font-semibold text-foreground">{link.name}</div><div className="text-[9px] text-muted-foreground leading-tight">{link.desc}</div></div></a>))}</div>
       </div>
     </div>
   );
@@ -304,7 +319,7 @@ function StatsStrip() {
 export default function Dashboard() {
   const { scienceMode } = useScienceMode();
   const { events: liveEvents } = useAstroWebSocket();
-  const { data: initialData } = useListEvents({ limit: 100 });
+  const { data: initialData } = useListEvents({ limit: 300 });
   const [selectedEvent, setSelectedEvent] = useState<AstroEvent | null>(null);
   
   const allEvents = useMemo(() => {
