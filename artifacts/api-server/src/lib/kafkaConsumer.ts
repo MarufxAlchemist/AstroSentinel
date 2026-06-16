@@ -42,6 +42,8 @@
 import { WebSocket } from "ws";
 import { sql } from "drizzle-orm";
 import { db, eventsTable } from "@workspace/db";
+import { eventLocalizations } from "@workspace/db";
+
 import { broadcastEvent, broadcastEventUpdate } from "./eventBroadcaster";
 import { applyAlertFilter } from "./alertFilter";
 import type { Lifecycle } from "./alertFilter";
@@ -295,6 +297,52 @@ async function _handleAlert(envelope: Record<string, unknown>): Promise<void> {
       broadcastEventUpdate(broadcastPayload);
     } else {
       broadcastEvent(broadcastPayload);
+    }
+
+    // ── Persist localization metadata (GW events only) ─────────────────────
+    // Only runs when the Python normalizer emitted a fitsUrl.
+    // Failure here is non-fatal: event ingestion is already complete.
+    const fitsUrl = typeof event["fitsUrl"] === "string" && event["fitsUrl"].trim()
+      ? (event["fitsUrl"] as string).trim()
+      : null;
+
+    if (fitsUrl) {
+      try {
+        // Step 1: mark all prior localizations for this event as not-latest
+        await db
+          .update(eventLocalizations)
+          .set({ isLatest: false })
+          .where(sql`${eventLocalizations.eventId} = ${upserted.id}`);
+
+        // Step 2: derive revision number from event revision count
+        const locVersion = Number(upserted.revisionCount) + 1;
+
+        // Step 3: insert the new localization row
+        await db.insert(eventLocalizations).values({
+          eventId: upserted.id,
+          labId:   defaultLab.id,
+          method:  "bayestar",   // LVK standard rapid localisation pipeline
+          version: locVersion,
+          fitsUrl,
+          isLatest: true,
+        });
+
+        logger.info(
+          {
+            eventId:    upserted.eventId,
+            fitsUrl,
+            version:    locVersion,
+            source:     "gcn-kafka-bridge",
+          },
+          "[kafka-bridge] Localization row inserted into core.event_localizations",
+        );
+      } catch (locErr) {
+        // Log but do NOT rethrow — event ingestion has already succeeded.
+        logger.error(
+          { locErr, eventId: upserted.eventId, fitsUrl },
+          "[kafka-bridge] Failed to persist localization metadata — event row unaffected",
+        );
+      }
     }
 
   } catch (err) {
