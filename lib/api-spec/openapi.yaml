@@ -94,6 +94,35 @@ paths:
         "404":
           description: Event not found
 
+  /events/{id}/localizations:
+    get:
+      operationId: getEventLocalizations
+      tags: [events]
+      summary: List sky localizations for a GW event
+      description: |
+        Returns all localization records for the given event (ordered by
+        version descending, latest first).  Returns an empty array when no
+        FITS sky-map has been ingested for this event.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Primary key of the event (core.events.id)
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: List of localization records (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EventLocalization"
+        "400":
+          description: Invalid event ID
+
 components:
   schemas:
     HealthStatus:
@@ -103,6 +132,64 @@ components:
           type: string
       required:
         - status
+
+    EventLocalization:
+      type: object
+      description: Sky localization metadata for a gravitational-wave event
+      properties:
+        id:
+          type: string
+          description: Primary key (bigserial, serialised as string)
+        eventId:
+          type: string
+          description: FK to core.events.id (serialised as string)
+        fitsUrl:
+          type: string
+          description: URL to the FITS sky-map file on GraceDB
+        method:
+          type: string
+          description: Localisation pipeline (e.g. bayestar, lalinference)
+        version:
+          type: integer
+          description: Monotonically increasing revision number (1-based)
+        isLatest:
+          type: boolean
+          description: True for the most recent localization for this event
+        nside:
+          type: integer
+          nullable: true
+          description: HEALPix NSIDE resolution parameter
+        area50Deg2:
+          type: number
+          nullable: true
+          description: 50th-percentile credible region area (deg²)
+        area90Deg2:
+          type: number
+          nullable: true
+          description: 90th-percentile credible region area (deg²)
+        vol50Mpc3:
+          type: number
+          nullable: true
+          description: 50th-percentile credible volume (Mpc³)
+        vol90Mpc3:
+          type: number
+          nullable: true
+          description: 90th-percentile credible volume (Mpc³)
+        hasNsProb:
+          type: number
+          nullable: true
+          description: Probability that at least one binary component is a neutron star
+        createdAt:
+          type: string
+          description: UTC ISO timestamp of row insertion
+      required:
+        - id
+        - eventId
+        - fitsUrl
+        - method
+        - version
+        - isLatest
+        - createdAt
 
     AstroEvent:
       type: object
