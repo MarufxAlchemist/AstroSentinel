@@ -15,6 +15,23 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+# ---------------------------------------------------------------------------
+# Optional Astropy import — used for real Sun/Moon angular separation.
+# Falls back gracefully if astropy is not installed.
+# ---------------------------------------------------------------------------
+try:
+    import warnings
+    from astropy.coordinates import SkyCoord, get_body
+    from astropy.coordinates.errors import NonRotationTransformationWarning
+    from astropy.time import Time
+    import astropy.units as u
+    # Suppress the expected GCRS→ICRS precision note that fires on every
+    # solar-system body separation calculation.
+    warnings.filterwarnings("ignore", category=NonRotationTransformationWarning)
+    _ASTROPY_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _ASTROPY_AVAILABLE = False
+
 from app.gcn.topics import get_topic_meta
 
 # ---------------------------------------------------------------------------
@@ -59,6 +76,9 @@ def normalize(topic: str, raw: dict[str, Any]) -> dict[str, Any]:
         "moonDistance":  0.0,
         "fluence":       None,
         "dm":            None,
+        # FITS sky-localization URL — populated only for GW events (IGWN).
+        # None means "no skymap URL present in this payload".
+        "fitsUrl":       None,
         "raw":           raw,
     }
 
@@ -125,12 +145,56 @@ def _ra_dec_to_gal(ra: float, dec: float) -> tuple[float, float]:
     return round(l, 4), round(b, 4)
 
 
-def _sun_moon_distance(ra: float, dec: float) -> tuple[float, float]:
+def _sun_moon_distance(
+    ra: float,
+    dec: float,
+    detection_time_iso: str | None = None,
+) -> tuple[float, float]:
     """
-    Placeholder distances.  Full ephemeris requires astropy or ephem.
-    Returns 90.0 for both until a proper calculation is added.
+    Angular separation (degrees) between the event sky position and the
+    Sun / Moon at the moment of detection.
+
+    Uses Astropy's built-in DE430 ephemeris via get_body().  Falls back
+    to 90.0 / 90.0 if:
+      * Astropy is not installed
+      * detection_time_iso is None or unparseable
+      * the ephemeris calculation raises for any reason
+
+    Parameters
+    ----------
+    ra : float
+        Right Ascension in decimal degrees (ICRS / J2000).
+    dec : float
+        Declination in decimal degrees (ICRS / J2000).
+    detection_time_iso : str | None
+        ISO-8601 UTC timestamp of the event (e.g. "2026-06-07T12:34:56Z").
+        If None, returns the fallback values.
+
+    Returns
+    -------
+    (sun_deg, moon_deg) : tuple[float, float]
+        Angular separations in degrees, rounded to 4 decimal places.
     """
-    return 90.0, 90.0
+    if not _ASTROPY_AVAILABLE or not detection_time_iso:
+        return 90.0, 90.0
+    try:
+        # Astropy Time(iso) requires the string without a tz offset.
+        # Strip trailing Z or +00:00 and pass scale="utc" explicitly.
+        ts = detection_time_iso.strip()
+        if ts.endswith("Z"):
+            ts = ts[:-1]
+        elif ts.endswith("+00:00"):
+            ts = ts[:-6]
+        t = Time(ts, format="isot", scale="utc")
+        event_coord = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame="icrs")
+        sun_coord   = get_body("sun",  t)
+        moon_coord  = get_body("moon", t)
+        sun_sep  = round(float(event_coord.separation(sun_coord).deg),  4)
+        moon_sep = round(float(event_coord.separation(moon_coord).deg), 4)
+        return sun_sep, moon_sep
+    except Exception as exc:  # pragma: no cover
+        print(f"[normalizer] sun/moon separation failed ({detection_time_iso}): {exc}")
+        return 90.0, 90.0
 
 
 def _latency_us(detection_time_iso: str) -> int:
@@ -154,9 +218,9 @@ def _chime_frb(raw: dict, event_type: str) -> dict:
     """
     ra  = _safe_float(raw.get("ra"))
     dec = _safe_float(raw.get("dec"))
-    gal_lon, gal_lat = _ra_dec_to_gal(ra, dec)
-    sun_d, moon_d    = _sun_moon_distance(ra, dec)
     det_time = raw.get("detection_time") or raw.get("event_time") or _now_iso()
+    gal_lon, gal_lat = _ra_dec_to_gal(ra, dec)
+    sun_d, moon_d    = _sun_moon_distance(ra, dec, det_time)
 
     return {
         "eventId":       raw.get("tns_name") or raw.get("event_name") or _make_event_id("FRB"),
@@ -183,9 +247,9 @@ def _einstein_probe(raw: dict, event_type: str) -> dict:
     """
     ra  = _safe_float(raw.get("ra_obj",  raw.get("ra")))
     dec = _safe_float(raw.get("dec_obj", raw.get("dec")))
-    gal_lon, gal_lat = _ra_dec_to_gal(ra, dec)
-    sun_d, moon_d    = _sun_moon_distance(ra, dec)
     det_time = raw.get("trigger_time") or raw.get("t_start") or _now_iso()
+    gal_lon, gal_lat = _ra_dec_to_gal(ra, dec)
+    sun_d, moon_d    = _sun_moon_distance(ra, dec, det_time)
     trigger  = raw.get("trigger_id") or raw.get("id") or ""
 
     return {
@@ -213,8 +277,9 @@ def _icecube(raw: dict, event_type: str) -> dict:
     """
     ra  = _safe_float(raw.get("ra"))
     dec = _safe_float(raw.get("dec"))
+    det_time  = raw.get("event_dt") or raw.get("time") or _now_iso()
     gal_lon, gal_lat = _ra_dec_to_gal(ra, dec)
-    sun_d, moon_d    = _sun_moon_distance(ra, dec)
+    sun_d, moon_d    = _sun_moon_distance(ra, dec, det_time)
 
     # IceCube uses separate ra_err / dec_err; use the larger for errorRadius
     ra_err  = _safe_float(raw.get("ra_err",  raw.get("ra_uncertainty",  0.0)))
@@ -248,20 +313,48 @@ def _igwn(raw: dict, event_type: str) -> dict:
     """
     IGWN Gravitational Wave alert schema (LVK O4 superevents).
     Key fields: superevent_id, event.time, event.far, event.skymap
+
+    FITS / skymap URL extraction
+    ----------------------------
+    The LVK payload can carry the sky-localisation FITS URL in several places
+    depending on GraceDB version and alert type:
+
+      1. event.skymap       — O4 standard location (most common)
+      2. skymap             — top-level alias used in some GraceDB notices
+      3. fits_url           — older O3-era field name
+      4. localization_url   — GraceDB REST API response field
+
+    We try each in order.  If none resolves to a non-empty string, fitsUrl
+    is set to None and no localization row will be written downstream.
     """
     event_block = raw.get("event", {}) or {}
     ra  = _safe_float(event_block.get("ra",  raw.get("ra",  0.0)))
     dec = _safe_float(event_block.get("dec", raw.get("dec", 0.0)))
-    gal_lon, gal_lat = _ra_dec_to_gal(ra, dec)
-    sun_d, moon_d    = _sun_moon_distance(ra, dec)
-
     det_time = (
         event_block.get("time")
         or raw.get("time_created")
         or raw.get("event_time")
         or _now_iso()
     )
+    gal_lon, gal_lat = _ra_dec_to_gal(ra, dec)
+    sun_d, moon_d    = _sun_moon_distance(ra, dec, det_time)
     superevent_id = raw.get("superevent_id", _make_event_id("GW"))
+
+    # ── FITS URL extraction ───────────────────────────────────────────────────
+    # Try each candidate location; use the first truthy (non-empty) string.
+    fits_url: str | None = (
+        event_block.get("skymap")
+        or raw.get("skymap")
+        or raw.get("fits_url")
+        or raw.get("localization_url")
+        or None
+    )
+    # Coerce to str or None — reject non-string values (e.g. dicts, lists)
+    if fits_url is not None and not isinstance(fits_url, str):
+        fits_url = None
+    # Empty string → None
+    if fits_url is not None and not fits_url.strip():
+        fits_url = None
 
     return {
         "eventId":       superevent_id,
@@ -278,6 +371,7 @@ def _igwn(raw: dict, event_type: str) -> dict:
         "moonDistance":  moon_d,
         "fluence":       None,
         "dm":            None,
+        "fitsUrl":       fits_url,
     }
 
 
@@ -288,9 +382,9 @@ def _swift_bat(raw: dict, event_type: str) -> dict:
     """
     ra  = _safe_float(raw.get("ra"))
     dec = _safe_float(raw.get("dec"))
-    gal_lon, gal_lat = _ra_dec_to_gal(ra, dec)
-    sun_d, moon_d    = _sun_moon_distance(ra, dec)
     det_time  = raw.get("trigger_time") or raw.get("time") or _now_iso()
+    gal_lon, gal_lat = _ra_dec_to_gal(ra, dec)
+    sun_d, moon_d    = _sun_moon_distance(ra, dec, det_time)
     trig_num  = raw.get("trigger_num", raw.get("burst_trigger", ""))
     event_id  = f"GRB{trig_num}" if trig_num else _make_event_id("GRB")
 
@@ -316,8 +410,9 @@ def _generic(raw: dict, event_type: str) -> dict:
     """Last-resort parser for unknown topics."""
     ra  = _safe_float(raw.get("ra"))
     dec = _safe_float(raw.get("dec"))
-    gal_lon, gal_lat = _ra_dec_to_gal(ra, dec)
     det_time = raw.get("time") or raw.get("detection_time") or _now_iso()
+    gal_lon, gal_lat = _ra_dec_to_gal(ra, dec)
+    sun_d, moon_d    = _sun_moon_distance(ra, dec, det_time)
 
     return {
         "eventId":       raw.get("event_id") or _make_event_id(event_type),
@@ -330,8 +425,8 @@ def _generic(raw: dict, event_type: str) -> dict:
         "latencyUs":     _latency_us(det_time),
         "galLon":        gal_lon,
         "galLat":        gal_lat,
-        "sunDistance":   90.0,
-        "moonDistance":  90.0,
+        "sunDistance":   sun_d,
+        "moonDistance":  moon_d,
         "fluence":       None,
         "dm":            None,
     }
