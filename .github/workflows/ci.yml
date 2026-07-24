@@ -107,7 +107,7 @@ jobs:
       - name: Build all Docker images
         run: |
           DOCKER_BUILDKIT=1 docker compose -f docker-compose.prod.yml build \
-            --progress plain
+            --no-cache --progress plain
         env:
           DOCKER_BUILDKIT: "1"
 
@@ -139,7 +139,7 @@ jobs:
           printf "GCN_CLIENT_ID=ci_test\nGCN_CLIENT_SECRET=ci_test\n" > backend/.env
 
       - name: Build images
-        run: DOCKER_BUILDKIT=1 docker compose -f docker-compose.prod.yml build --progress plain
+        run: DOCKER_BUILDKIT=1 docker compose -f docker-compose.prod.yml build --no-cache --progress plain
         env:
           DOCKER_BUILDKIT: "1"
 
