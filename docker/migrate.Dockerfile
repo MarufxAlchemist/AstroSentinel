@@ -50,33 +50,42 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 #   - migrations/meta/_journal.json → which ones are already applied
 COPY lib/db/ ./lib/db/
 
-# ── Migration runner script ───────────────────────────────────────────────────
-# We use a Node.js child-process wrapper instead of a shell command because
-# drizzle-kit emits ANSI escape codes (cursor movement, erase-line) that defeat
-# both `tr '\r' '\n'` and file-redirect approaches in CI/non-TTY environments.
-# spawnSync with stdio:'pipe' intercepts output before any codes are interpreted.
-RUN cat > /run-migrate.cjs << 'JSEOF'
-const { spawnSync } = require('child_process');
-const r = spawnSync(
-  'node_modules/.bin/drizzle-kit',
-  ['migrate', '--config', './drizzle.config.ts'],
-  {
-    cwd: '/workspace/lib/db',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' }
+# ── Programmatic Migration Script ─────────────────────────────────────────────
+# drizzle-kit migrate CLI can silently swallow errors and exit code 1.
+# The robust production approach is to run migrations programmatically.
+RUN cat > /workspace/lib/db/run-migrate.mjs << 'EOF'
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import pg from 'pg';
+
+const { Pool } = pg;
+
+async function run() {
+  if (!process.env.DATABASE_URL) {
+    console.error("Missing DATABASE_URL");
+    process.exit(1);
   }
-);
-const strip = s => s.replace(/\x1B\[[0-9;]*[A-Za-z]/g, '').replace(/\r/g, '\n');
-const out = strip((r.stdout || Buffer.alloc(0)).toString());
-const err = strip((r.stderr || Buffer.alloc(0)).toString());
-console.log('=== drizzle-kit stdout ===');
-process.stdout.write(out);
-console.log('=== drizzle-kit stderr ===');
-process.stderr.write(err);
-console.log('=== exit code:', r.status, '===');
-process.exit(r.status !== null ? r.status : 1);
-JSEOF
+  
+  console.log("Connecting to database...");
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const db = drizzle(pool);
+  
+  console.log("Running migrations...");
+  try {
+    await migrate(db, { migrationsFolder: './migrations' });
+    console.log("✅ Migrations applied successfully!");
+    await pool.end();
+    process.exit(0);
+  } catch (err) {
+    console.error("❌ Migration failed:");
+    console.error(err);
+    process.exit(1);
+  }
+}
+
+run();
+EOF
 
 # ── Run migrations ────────────────────────────────────────────────────────────
 # DATABASE_URL is injected at runtime by docker-compose.
-CMD ["node", "/run-migrate.cjs"]
+CMD ["sh", "-c", "cd /workspace/lib/db && node run-migrate.mjs"]
