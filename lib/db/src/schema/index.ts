@@ -52,6 +52,7 @@ export {
   eventFollowupRequests,
   eventAnnotations,
   eventEmbeddings,
+  aiCorrelationAnalysis,
   eventsRelations,
   eventDetectionsRelations,
   eventLocalizationsRelations,
@@ -59,6 +60,7 @@ export {
   eventFollowupRequestsRelations,
   eventAnnotationsRelations,
   eventEmbeddingsRelations,
+  aiCorrelationAnalysisRelations,
 } from "./events.js";
 export type {
   AstroEvent,
@@ -75,6 +77,8 @@ export type {
   InsertEventAnnotation,
   EventEmbedding,
   InsertEventEmbedding,
+  AiCorrelationAnalysis,
+  InsertAiCorrelationAnalysis,
 } from "./events.js";
 
 // ─── Alerts ───────────────────────────────────────────────────────────────────

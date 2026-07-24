@@ -1,0 +1,191 @@
+##############################################################################
+# docker-compose.yml — Cosmic Alert System
+#
+# Services
+# ────────
+#   postgres        PostgreSQL 16          port 5432
+#   python-backend  FastAPI + uvicorn      port 8001
+#   api-server      Express + WebSocket    port 8000
+#   frontend        nginx (Vite bundle)    port 5173
+#
+# Startup order
+# ─────────────
+#   postgres → api-server
+#   postgres → python-backend (optional, no direct DB dep but ordered for clarity)
+#   python-backend → api-server   (api-server connects via WebSocket bridge)
+#   api-server → frontend
+#
+# Environment variables
+# ─────────────────────
+# Secrets are loaded from .env at the repo root via env_file.
+# Never hardcode credentials here — always reference variables.
+#
+# Networking
+# ──────────
+# All services share the `cosmic` bridge network.
+# Services communicate via their service names, never via localhost.
+#   api-server connects to postgres  → postgres:5432
+#   api-server connects to python    → ws://python-backend:8001/api/ws
+#   frontend nginx proxies /api/*    → http://api-server:8000
+##############################################################################
+
+services:
+
+  # ── 1. PostgreSQL ──────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+
+    # Inject database credentials from the root .env file.
+    # POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB are used by the
+    # official postgres image to create the database on first run.
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB:       ${POSTGRES_DB:-Astro-sentinel}
+
+    # Named volume so data persists across `docker compose down` restarts.
+    # `docker compose down -v` will destroy it (intentional data wipe).
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    ports:
+      # Expose to host so you can connect with psql / DBeaver during development.
+      - "5432:5432"
+
+    networks:
+      - cosmic
+
+    # Health check: pg_isready polls until postgres accepts connections.
+    # Other services use `depends_on: condition: service_healthy` so they
+    # won't start until this passes.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-Astro-sentinel}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── 2. Python Backend (GCN Kafka consumer + FastAPI WebSocket) ─────────────
+  python-backend:
+    build:
+      # Build context is the backend/ directory — standalone Python service,
+      # no workspace deps outside its own folder.
+      context: ./backend
+      dockerfile: Dockerfile
+
+    restart: unless-stopped
+
+    # GCN credentials come from backend/.env (or root .env env_file).
+    # DATABASE_URL is NOT needed by this service (it reads from JSON + Kafka).
+    env_file:
+      - ./backend/.env   # GCN_CLIENT_ID, GCN_CLIENT_SECRET
+
+    ports:
+      - "8001:8001"
+
+    networks:
+      - cosmic
+
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  # ── 3. API Server (Express + Drizzle ORM + WebSocket) ─────────────────────
+  api-server:
+    build:
+      # Context is the REPO ROOT — required so pnpm can resolve workspace
+      # packages (@workspace/db, @workspace/api-zod, etc.)
+      context: .
+      dockerfile: artifacts/api-server/Dockerfile
+
+    restart: unless-stopped
+
+    environment:
+      # Port the Express server listens on (required by src/index.ts)
+      PORT: "8000"
+
+      # PostgreSQL connection — uses `postgres` (service name) instead of localhost.
+      # Password is URL-encoded (%40 = @) to be safe in a connection string.
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD_URLENC}@postgres:5432/${POSTGRES_DB:-Astro-sentinel}"
+
+      # WebSocket URL of the Python backend — MUST use service name, not localhost.
+      # kafkaConsumer.ts defaults to ws://localhost:8001/api/ws if unset;
+      # we override it here to use the Docker service name.
+      PYTHON_BACKEND_URL: "ws://python-backend:8001/api/ws"
+
+      # Auth & Google OAuth
+      JWT_SECRET:        ${JWT_SECRET}
+      GOOGLE_CLIENT_ID:  ${GOOGLE_CLIENT_ID}
+
+      # AI analysis endpoint
+      GEMINI_API_KEY:    ${GEMINI_API_KEY}
+      GEMINI_MODEL:      ${GEMINI_MODEL:-gemini-2.5-flash}
+      GEMINI_TIMEOUT_MS: ${GEMINI_TIMEOUT_MS:-45000}
+
+      # ORCID
+      ORCID_CLIENT_ID:     ${ORCID_CLIENT_ID}
+      ORCID_CLIENT_SECRET: ${ORCID_CLIENT_SECRET}
+
+      NODE_ENV: production
+
+    ports:
+      - "8000:8000"
+
+    networks:
+      - cosmic
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      python-backend:
+        condition: service_healthy
+
+    healthcheck:
+      # /api/healthz is the real endpoint defined in src/routes/health.ts
+      # Uses native fetch (available in Node 22) — safe in ESM environment.
+      test: ["CMD-SHELL", "node --input-type=module -e \"fetch('http://localhost:8000/api/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  # ── 4. Frontend (nginx serving Vite bundle + proxying /api) ───────────────
+  frontend:
+    build:
+      # Context is the REPO ROOT — required for pnpm workspace deps
+      # (@workspace/api-client-react, etc.)
+      context: .
+      dockerfile: artifacts/astro-sentinel/Dockerfile
+
+    restart: unless-stopped
+
+    # VITE_* variables are baked into the bundle at BUILD time by Vite.
+    # They are NOT read at runtime by nginx. Pass them as build-args if needed.
+    # Runtime environment for the nginx container itself needs no special vars.
+
+    ports:
+      - "5173:5173"
+
+    networks:
+      - cosmic
+
+    depends_on:
+      api-server:
+        condition: service_healthy
+
+# ── Named volumes ──────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+    # Docker manages this volume on the host.
+    # Survives `docker compose down` — only removed with `docker compose down -v`.
+
+# ── Networks ───────────────────────────────────────────────────────────────────
+networks:
+  cosmic:
+    driver: bridge
+    # All services on this network can reach each other by service name.
+    # No service should reference localhost to talk to another service.

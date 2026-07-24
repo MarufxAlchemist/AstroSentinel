@@ -42,6 +42,7 @@ $env:DATABASE_URL="postgresql://postgres:Maruf%40788824@localhost:5432/Astro-sen
 $env:PORT="8000"
 $env:JWT_SECRET="AstroSentinelSecret"
 $env:PYTHON_BACKEND_URL="ws://localhost:8001/api/ws"
+$env:GEMINI_API_KEY="your_gemini_api_key_here"
 
 pnpm dev
 
@@ -69,3 +70,6 @@ Auth Token (for API testing):
 eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIyMDJkMjVmOC02NzQ1LTRkNDYtODc5NC00ZWNlM2ZjM2MwYWQiLCJlbWFpbCI6Im1hcnVmQHRlc3QuY29tIiwicm9sZSI6ImFkbWluIiwiaWF0IjoxNzgwOTI2NzcxLCJleHAiOjE3ODE1MzE1NzF9.1xJyOelBCKkVlwk0ZvZRxxcoNM67pLLcIMzZuVoV-Yg
 
 ======================================================================================================
+
+
+claude --resume fc1ebb1a-8e89-420b-a3e5-88f24c6c74de

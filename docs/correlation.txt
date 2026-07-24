@@ -1,0 +1,14 @@
+Input:
+{
+  "primary_event": {},
+  "candidate_events": [],
+  "correlation_scores": {}
+}
+
+Output:
+{
+  "confidence": "HIGH",
+  "scientific_assessment": "...",
+  "followup_recommendation": "...",
+  "reasoning": "..."
+}

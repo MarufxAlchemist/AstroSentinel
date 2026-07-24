@@ -1,0 +1,44 @@
+# ── Git ─────────────────────────────────────────────────────────────────────
+.git
+.gitignore
+.github
+
+# ── Node ─────────────────────────────────────────────────────────────────────
+node_modules
+**/node_modules
+
+# ── Build outputs ─────────────────────────────────────────────────────────────
+dist
+**/dist
+out-tsc
+*.tsbuildinfo
+
+# ── Python ────────────────────────────────────────────────────────────────────
+backend/venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# ── Cache / local config ──────────────────────────────────────────────────────
+.cache
+.local
+.claude
+
+# ── Large data files not needed in containers ─────────────────────────────────
+gcn_archive.json.tar.gz
+historical_events.json
+historical_events_2026.json
+regenerate_historical_events.py
+ingest_gcn_archive.py
+generate_events.py
+PROJECT_ANALYSIS.md
+docs
+
+# ── Secrets (never bake into images) ─────────────────────────────────────────
+.env

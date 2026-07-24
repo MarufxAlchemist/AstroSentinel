@@ -4,6 +4,7 @@ import { useGetEvent, getGetEventQueryKey } from "@workspace/api-client-react";
 import { EventBadge } from "@/components/EventBadge";
 import { formatMicrosecondDate, formatLatency } from "@/lib/formatters";
 import { ArrowLeft, Target, Map, Activity, Clock, Zap, Database, FlaskConical, Bookmark, BookmarkCheck } from "lucide-react";
+import { CorrelationAnalysisPanel } from "@/components/CorrelationAnalysisPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SkyMap } from "@/components/SkyMap";
@@ -12,13 +13,17 @@ import { FitsLocalizationViewer } from "@/components/FitsLocalizationViewer";
 import { useAuth } from "@/lib/AuthContext";
 import { Network } from "lucide-react";
 
+type CorrelationType = "multi_messenger" | "cross_detection" | "speculative";
+
 interface Correlation {
   id: string;
   eventId: string;
   eventType: string;
+  observatory: string;
   score: number;
   angularSeparationDeg: number;
   deltaTSeconds: number;
+  correlationType: CorrelationType;
 }
 
 export default function EventDetailPage() {
@@ -314,6 +319,7 @@ export default function EventDetailPage() {
             </CardContent>
           </Card>
 
+
           {/* Multi-Messenger Correlations */}
           <Card className="bg-card border-border/50 shadow-none">
             <CardHeader className="pb-3">
@@ -332,37 +338,78 @@ export default function EventDetailPage() {
                   <span className="text-sm text-muted-foreground">No strong correlations found in the vicinity.</span>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {correlations.map((corr) => (
-                    <div key={corr.id} className="flex items-center justify-between p-3 rounded-lg border border-border/50 bg-muted/20">
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <EventBadge type={corr.eventType} />
-                          <Link href={`/events/${corr.id}`} className="font-mono font-bold hover:underline">
-                            {corr.eventId}
-                          </Link>
+                <div className="space-y-3">
+                  {correlations.map((corr) => {
+                    const isMultiMessenger = corr.correlationType === "multi_messenger";
+                    const isCrossDetection = corr.correlationType === "cross_detection";
+                    const scoreColor =
+                      isCrossDetection ? "text-sky-400" :
+                      corr.score > 70  ? "text-emerald-400" :
+                      corr.score > 40  ? "text-amber-400" :
+                                         "text-muted-foreground";
+
+                    return (
+                      <div
+                        key={corr.id}
+                        className={`flex items-start justify-between p-3 rounded-lg border bg-muted/20 ${
+                          isCrossDetection ? "border-sky-500/20" : "border-border/50"
+                        }`}
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <EventBadge type={corr.eventType} />
+                            <Link
+                              href={`/events/${corr.id}`}
+                              className="font-mono font-bold hover:underline text-sm"
+                            >
+                              {corr.eventId}
+                            </Link>
+                          </div>
+                          <div className="text-xs text-muted-foreground flex flex-wrap gap-3">
+                            <span>{corr.observatory}</span>
+                            <span>Sep: {corr.angularSeparationDeg.toFixed(2)}&deg;</span>
+                            <span>
+                              &Delta;T:{" "}
+                              {corr.deltaTSeconds > 0 ? "+" : ""}
+                              {Math.abs(corr.deltaTSeconds) > 86400
+                                ? (corr.deltaTSeconds / 3600).toFixed(1) + "h"
+                                : corr.deltaTSeconds.toFixed(1) + "s"}
+                            </span>
+                          </div>
+                          {/* Correlation type badge */}
+                          <span
+                            className={`inline-block text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                              isMultiMessenger
+                                ? "border-primary/30 bg-primary/10 text-primary/80"
+                                : isCrossDetection
+                                  ? "border-sky-500/30 bg-sky-500/10 text-sky-400"
+                                  : "border-border/50 bg-muted/30 text-muted-foreground"
+                            }`}
+                          >
+                            {isCrossDetection ? "cross-detection" : isMultiMessenger ? "multi-messenger" : "speculative"}
+                          </span>
                         </div>
-                        <div className="text-xs text-muted-foreground flex gap-3">
-                          <span>Sep: {corr.angularSeparationDeg.toFixed(2)}&deg;</span>
-                          <span>&Delta;T: {corr.deltaTSeconds > 0 ? '+' : ''}{corr.deltaTSeconds > 86400 || corr.deltaTSeconds < -86400 ? (corr.deltaTSeconds/3600).toFixed(1) + 'h' : corr.deltaTSeconds.toFixed(1) + 's'}</span>
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end">
-                        <span className="text-xs uppercase tracking-wider text-muted-foreground">Confidence</span>
-                        <div className="flex items-center gap-2">
-                          <span className={`font-mono text-lg font-bold ${corr.score > 75 ? 'text-green-500' : 'text-amber-500'}`}>
+                        <div className="flex flex-col items-end shrink-0 pl-3">
+                          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Score</span>
+                          <span className={`font-mono text-lg font-bold ${scoreColor}`}>
                             {corr.score}%
                           </span>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
           </Card>
         </div>
       </div>
+
+      {/* ── AI Correlation Analysis ─────────────────────────────────────────── */}
+      <CorrelationAnalysisPanel
+        eventId={event.id}
+        hasCorrelations={correlations.length > 0}
+      />
     </div>
   );
 }

@@ -1,14 +1,30 @@
 import { Router } from "express";
-import { db, eventsTable, eventLocalizations } from "@workspace/db";
+import { createHash } from "node:crypto";
+import { db, eventsTable, eventLocalizations, aiCorrelationAnalysis } from "@workspace/db";
 import { desc, eq, and, sql } from "drizzle-orm";
 import { ListEventsQueryParams, GetEventParams } from "@workspace/api-zod";
-
+import { CorrelationAgent, type CorrelationAnalysisResult } from "../services/ai/correlation-agent.js";
+import { createDefaultProvider } from "../services/ai/provider.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
 
+// ─── Lazy provider singleton ──────────────────────────────────────────────────
+// Instantiated on first analysis request, reused for all subsequent ones.
+// Avoids re-reading env vars and re-constructing the SDK client per request.
+let _agent: CorrelationAgent | null = null;
+
+function getAgent(): CorrelationAgent {
+  if (!_agent) {
+    _agent = new CorrelationAgent(createDefaultProvider());
+  }
+  return _agent;
+}
+
+// ─── Event formatter ──────────────────────────────────────────────────────────
+
 function formatEvent(row: typeof eventsTable.$inferSelect) {
   return {
-    // id and latencyUs are BigInt because of bigserial({ mode: "bigint" })
     id: String(row.id),
     eventId: row.eventId,
     eventType: row.eventType,
@@ -31,7 +47,6 @@ function formatEvent(row: typeof eventsTable.$inferSelect) {
     moonDistance: row.moonDistance,
     latencyUs: String(row.latencyUs),
     createdAt: row.createdAt.toISOString(),
-    // Alert filtering metadata
     lifecycle: (row.lifecycle ?? "preliminary") as "preliminary" | "initial" | "update" | "confirmed",
     alertType: row.alertType ?? undefined,
     classificationTier: (row.classificationTier ?? undefined) as "GOLD" | "BRONZE" | undefined,
@@ -40,7 +55,8 @@ function formatEvent(row: typeof eventsTable.$inferSelect) {
   };
 }
 
-// GET /events
+// ─── GET /events ──────────────────────────────────────────────────────────────
+
 router.get("/events", async (req, res) => {
   const parsed = ListEventsQueryParams.safeParse(req.query);
   if (!parsed.success) {
@@ -52,7 +68,6 @@ router.get("/events", async (req, res) => {
 
   const conditions = [];
   if (eventType) conditions.push(eq(eventsTable.eventType, eventType));
-
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const [events, countResult] = await Promise.all([
@@ -75,49 +90,46 @@ router.get("/events", async (req, res) => {
   });
 });
 
-// GET /events/stats
+// ─── GET /events/stats ────────────────────────────────────────────────────────
+
 router.get("/events/stats", async (req, res) => {
-  const [totalResult, byTypeResult, byObservatoryResult, recentResult, latestResult] = await Promise.all([
-    db.select({ count: sql<number>`count(*)::int` }).from(eventsTable),
-    db
-      .select({ eventType: eventsTable.eventType, count: sql<number>`count(*)::int` })
-      .from(eventsTable)
-      .groupBy(eventsTable.eventType),
-    db
-      .select({ observatory: eventsTable.observatory, count: sql<number>`count(*)::int` })
-      .from(eventsTable)
-      .groupBy(eventsTable.observatory)
-      .orderBy(desc(sql`count(*)`)),
-    db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(eventsTable)
-      .where(sql`created_at > now() - interval '1 hour'`),
-    db.select().from(eventsTable).orderBy(desc(eventsTable.detectionTime)).limit(1),
-  ]);
+  const [totalResult, byTypeResult, byObservatoryResult, recentResult, latestResult] =
+    await Promise.all([
+      db.select({ count: sql<number>`count(*)::int` }).from(eventsTable),
+      db
+        .select({ eventType: eventsTable.eventType, count: sql<number>`count(*)::int` })
+        .from(eventsTable)
+        .groupBy(eventsTable.eventType),
+      db
+        .select({ observatory: eventsTable.observatory, count: sql<number>`count(*)::int` })
+        .from(eventsTable)
+        .groupBy(eventsTable.observatory)
+        .orderBy(desc(sql`count(*)`)),
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(eventsTable)
+        .where(sql`created_at > now() - interval '1 hour'`),
+      db.select().from(eventsTable).orderBy(desc(eventsTable.detectionTime)).limit(1),
+    ]);
 
-  // Build byType dynamically — includes every event type present in the DB
   const byType: Record<string, number> = {};
-  for (const row of byTypeResult) {
-    byType[row.eventType] = Number(row.count);
-  }
-
-  const byObservatory = byObservatoryResult.map((row) => ({
-    observatory: row.observatory ?? "Unknown",
-    count: Number(row.count),
-  }));
+  for (const row of byTypeResult) byType[row.eventType] = Number(row.count);
 
   res.json({
     totalEvents: Number(totalResult[0]?.count ?? 0),
     byType,
-    byObservatory,
+    byObservatory: byObservatoryResult.map((r) => ({
+      observatory: r.observatory ?? "Unknown",
+      count: Number(r.count),
+    })),
     recentRate: Number(recentResult[0]?.count ?? 0),
     latestEvent: latestResult[0] ? formatEvent(latestResult[0]) : null,
   });
 });
 
-// GET /events/:id/localizations
-// Must be registered BEFORE /events/:id so Express does not absorb
-// "localizations" as the :id param value.
+// ─── GET /events/:id/localizations ───────────────────────────────────────────
+// Registered before /:id to prevent Express consuming "localizations" as :id.
+
 router.get("/events/:id/localizations", async (req, res) => {
   const id = parseInt(req.params["id"] ?? "", 10);
   if (isNaN(id) || id <= 0) {
@@ -125,34 +137,33 @@ router.get("/events/:id/localizations", async (req, res) => {
     return;
   }
 
-  const eventId = BigInt(id);
-
   const rows = await db
     .select()
     .from(eventLocalizations)
-    .where(eq(eventLocalizations.eventId, eventId))
+    .where(eq(eventLocalizations.eventId, BigInt(id)))
     .orderBy(desc(eventLocalizations.version));
 
-  const payload = rows.map((loc) => ({
-    id:          String(loc.id),
-    eventId:     String(loc.eventId),
-    fitsUrl:     loc.fitsUrl,
-    method:      loc.method,
-    version:     loc.version,
-    isLatest:    loc.isLatest,
-    nside:       loc.nside       ?? undefined,
-    area50Deg2:  loc.area50Deg2  ?? undefined,
-    area90Deg2:  loc.area90Deg2  ?? undefined,
-    vol50Mpc3:   loc.vol50Mpc3   ?? undefined,
-    vol90Mpc3:   loc.vol90Mpc3   ?? undefined,
-    hasNsProb:   loc.hasNsProb   ?? undefined,
-    createdAt:   loc.createdAt.toISOString(),
-  }));
-
-  res.json(payload);
+  res.json(
+    rows.map((loc) => ({
+      id:         String(loc.id),
+      eventId:    String(loc.eventId),
+      fitsUrl:    loc.fitsUrl,
+      method:     loc.method,
+      version:    loc.version,
+      isLatest:   loc.isLatest,
+      nside:      loc.nside      ?? undefined,
+      area50Deg2: loc.area50Deg2 ?? undefined,
+      area90Deg2: loc.area90Deg2 ?? undefined,
+      vol50Mpc3:  loc.vol50Mpc3  ?? undefined,
+      vol90Mpc3:  loc.vol90Mpc3  ?? undefined,
+      hasNsProb:  loc.hasNsProb  ?? undefined,
+      createdAt:  loc.createdAt.toISOString(),
+    }))
+  );
 });
 
-// GET /events/:id
+// ─── GET /events/:id ─────────────────────────────────────────────────────────
+
 router.get("/events/:id", async (req, res) => {
   const parsed = GetEventParams.safeParse(req.params);
   if (!parsed.success) {
@@ -166,7 +177,11 @@ router.get("/events/:id", async (req, res) => {
     return;
   }
 
-  const [row] = await db.select().from(eventsTable).where(eq(eventsTable.id, BigInt(id))).limit(1);
+  const [row] = await db
+    .select()
+    .from(eventsTable)
+    .where(eq(eventsTable.id, BigInt(id)))
+    .limit(1);
 
   if (!row) {
     res.status(404).json({ error: "Event not found" });
@@ -176,7 +191,219 @@ router.get("/events/:id", async (req, res) => {
   res.json(formatEvent(row));
 });
 
-// GET /events/:id/correlations
+// ═════════════════════════════════════════════════════════════════════════════
+// CORRELATION ENGINE
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ─── Haversine angular separation ────────────────────────────────────────────
+
+function angularSeparation(
+  ra1: number, dec1: number,
+  ra2: number, dec2: number
+): number {
+  const d = Math.PI / 180;
+  const sinΔDec = Math.sin(((dec2 - dec1) * d) / 2);
+  const sinΔRa  = Math.sin(((ra2  - ra1)  * d) / 2);
+  const a =
+    sinΔDec * sinΔDec +
+    Math.cos(dec1 * d) * Math.cos(dec2 * d) * sinΔRa * sinΔRa;
+  return 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * (180 / Math.PI);
+}
+
+// ─── Pair configuration ───────────────────────────────────────────────────────
+//
+// SCIENTIFIC RATIONALE
+// ────────────────────
+// correlationType distinguishes two fundamentally different situations:
+//
+//   multi_messenger  — different physical messengers from (possibly) the same
+//                      astrophysical source (GRB+GW, GRB+ν, EP+GW …).
+//                      This is the primary scientific target of AstroSentinel.
+//
+//   cross_detection  — same event type, same sky position, close in time.
+//                      Almost certainly the same physical event detected by
+//                      two different instruments (Swift + Fermi, CHIME + other).
+//                      Scientifically valuable for cross-calibration but NOT
+//                      a multi-messenger association.
+//
+//   speculative      — no established physical emission mechanism connects these
+//                      event types. Include for completeness at low weight.
+//
+// sigma_t (seconds) is the Gaussian 1-σ temporal window for each pair.
+// Values are chosen from observational constraints in the literature:
+//
+//   GRB-GW  3 600s : BNS/NS-BH merger; GRB170817A arrived 1.74 s after GW170817.
+//                    3 600s (1 h) is generous but encompasses extended emission.
+//   EP-GW  86 400s : EP X-ray counterparts may be delayed hours (off-axis, kilonova).
+//   GRB-NU  3 600s : Prompt neutrinos from hadronic jets arrive within ~hours.
+//   EP-NU  86 400s : Delayed X-ray + neutrino emission from disk winds.
+//   GRB-EP  3 600s : Prompt X-ray afterglow from same relativistic jet.
+//   FRB-GW 86 400s : Speculative; no confirmed association. Wide window.
+//   same   3 600s  : Cross-instrument; window tight enough to identify same burst.
+
+export type CorrelationType = "multi_messenger" | "cross_detection" | "speculative";
+
+interface PairConfig {
+  readonly weight: number;          // 0–1 type-compatibility multiplier
+  readonly sigmaT: number;          // seconds, Gaussian temporal σ
+  readonly correlationType: CorrelationType;
+}
+
+const PAIR_CONFIGS: Readonly<Record<string, PairConfig>> = {
+  "GRB-GW": { weight: 1.0, sigmaT:   3_600, correlationType: "multi_messenger" },
+  "EP-GW":  { weight: 0.9, sigmaT:  86_400, correlationType: "multi_messenger" },
+  "GRB-NU": { weight: 0.8, sigmaT:   3_600, correlationType: "multi_messenger" },
+  "EP-NU":  { weight: 0.7, sigmaT:  86_400, correlationType: "multi_messenger" },
+  "GRB-EP": { weight: 0.6, sigmaT:   3_600, correlationType: "multi_messenger" },
+  "FRB-GW": { weight: 0.4, sigmaT:  86_400, correlationType: "speculative"     },
+  "FRB-NU": { weight: 0.3, sigmaT: 604_800, correlationType: "speculative"     },
+};
+
+function getPairConfig(type1: string, type2: string): PairConfig {
+  if (type1 === type2) {
+    // Cross-instrument detection of the same event type.
+    // Weight reduced to 0.5; tight 1-hour temporal window to avoid inflating
+    // score for GRBs reported hours apart by slow-processing pipelines.
+    return { weight: 0.5, sigmaT: 3_600, correlationType: "cross_detection" };
+  }
+  const key = [type1, type2].sort().join("-");
+  return PAIR_CONFIGS[key] ?? { weight: 0.2, sigmaT: 86_400, correlationType: "speculative" };
+}
+
+// ─── Core correlation computation ─────────────────────────────────────────────
+//
+// SCORING FORMULA
+// ───────────────
+//
+//   temporal_score(ΔT)  = exp(−ΔT²  / (2 σT²))          Gaussian in time
+//   spatial_score(θ)    = exp(−θ²   / (2 σθ²))           Gaussian in angle
+//   σθ                  = √(err1² + err2²)   (quadrature of error radii, degrees)
+//
+//   combined_score      = √(temporal_score × spatial_score)  ← GEOMETRIC MEAN
+//
+//   final_score         = round(weight × combined_score × 100)
+//
+// WHY GEOMETRIC MEAN over arithmetic mean?
+//
+//   Arithmetic mean allows one perfect score to compensate a zero score:
+//     mean(1.0, 0.0) = 0.50  → 50% for a GRB from the WRONG direction.
+//
+//   Geometric mean is zero whenever either factor is zero:
+//     √(1.0 × 0.0) = 0.00  → 0% correctly eliminates that false positive.
+//
+//   Example: GRB-GW, ΔT=2s (near-zero), θ=90° (opposite sky region):
+//     spatial ≈ exp(−450) ≈ 0
+//     arithmetic: 0.9 × mean(1.0, 0) × 100 = 45  ← false positive
+//     geometric:  1.0 × √(1.0 × 0)  × 100 = 0   ← correct
+
+type CandidateRow = typeof eventsTable.$inferSelect;
+
+export interface CorrelationResult {
+  id: string;
+  eventId: string;
+  eventType: string;
+  observatory: string;
+  score: number;
+  angularSeparationDeg: number;
+  deltaTSeconds: number;
+  spatialScore: number;
+  temporalScore: number;
+  correlationType: CorrelationType;
+}
+
+function computeCorrelations(
+  target: CandidateRow,
+  candidates: CandidateRow[]
+): CorrelationResult[] {
+  const results: CorrelationResult[] = [];
+
+  for (const candidate of candidates) {
+    const config = getPairConfig(target.eventType, candidate.eventType);
+
+    const deltaTSeconds =
+      (candidate.detectionTime.getTime() - target.detectionTime.getTime()) / 1000;
+
+    const temporalScore = Math.exp(
+      -(deltaTSeconds * deltaTSeconds) / (2 * config.sigmaT * config.sigmaT)
+    );
+
+    const separationDeg = angularSeparation(
+      target.ra, target.dec,
+      candidate.ra, candidate.dec
+    );
+
+    // Error radii are stored in arcminutes; convert to degrees.
+    // Floor at 0.1° to prevent division-by-zero on perfectly-localised events.
+    const err1 = Math.max((target.errorRadius    || 0) / 60, 0.1);
+    const err2 = Math.max((candidate.errorRadius || 0) / 60, 0.1);
+    const sigmaS = Math.sqrt(err1 * err1 + err2 * err2);
+
+    const spatialScore = Math.exp(
+      -(separationDeg * separationDeg) / (2 * sigmaS * sigmaS)
+    );
+
+    // Geometric mean — requires both temporal AND spatial coincidence.
+    const combinedScore = Math.sqrt(temporalScore * spatialScore);
+    const finalScore    = Math.round(config.weight * combinedScore * 100);
+
+    if (finalScore > 1) {
+      results.push({
+        id: String(candidate.id),
+        eventId: candidate.eventId,
+        eventType: candidate.eventType,
+        observatory: candidate.observatory,
+        score: finalScore,
+        angularSeparationDeg: separationDeg,
+        deltaTSeconds,
+        spatialScore,
+        temporalScore,
+        correlationType: config.correlationType,
+      });
+    }
+  }
+
+  results.sort((a, b) => b.score - a.score);
+  return results.slice(0, 10);
+}
+
+// ─── Cache hash ───────────────────────────────────────────────────────────────
+// Stable fingerprint of the top-10 correlation set for this event.
+// Changing the set (new events arrive, scores update) produces a new hash,
+// automatically bypassing the stale cache entry.
+
+function buildCorrelationHash(
+  eventId: string,
+  correlations: CorrelationResult[]
+): string {
+  const payload = JSON.stringify(
+    correlations.map((c) => ({ id: c.id, score: c.score }))
+  );
+  return createHash("sha256").update(`${eventId}:${payload}`).digest("hex");
+}
+
+// ─── Candidate window query ───────────────────────────────────────────────────
+
+async function fetchCandidates(
+  target: CandidateRow
+): Promise<CandidateRow[]> {
+  const windowMs = 7 * 24 * 60 * 60 * 1000;
+  const start = new Date(target.detectionTime.getTime() - windowMs);
+  const end   = new Date(target.detectionTime.getTime() + windowMs);
+
+  return db
+    .select()
+    .from(eventsTable)
+    .where(
+      and(
+        eq(eventsTable.labId, target.labId),
+        sql`${eventsTable.id} != ${target.id}`,
+        sql`${eventsTable.detectionTime} BETWEEN ${start.toISOString()} AND ${end.toISOString()}`
+      )
+    );
+}
+
+// ─── GET /events/:id/correlations ────────────────────────────────────────────
+
 router.get("/events/:id/correlations", async (req, res) => {
   const parsed = GetEventParams.safeParse(req.params);
   if (!parsed.success) {
@@ -190,112 +417,237 @@ router.get("/events/:id/correlations", async (req, res) => {
     return;
   }
 
-  const [targetEvent] = await db
+  const [target] = await db
     .select()
     .from(eventsTable)
     .where(eq(eventsTable.id, BigInt(id)))
     .limit(1);
 
-  if (!targetEvent) {
+  if (!target) {
     res.status(404).json({ error: "Event not found" });
     return;
   }
 
-  // Fetch candidate events in the same lab
-  // Using a 7-day window
-  const startWindow = new Date(targetEvent.detectionTime.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const endWindow = new Date(targetEvent.detectionTime.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const candidates = await fetchCandidates(target);
+  res.json(computeCorrelations(target, candidates));
+});
 
-  const candidates = await db
+// ─── GET /events/:id/correlations/analysis ───────────────────────────────────
+//
+// AI-powered scientific assessment of the correlation candidates.
+// Cache-first: reads from ai_correlation_analysis before calling Gemini.
+// Cache key = SHA-256 of (event_id + top-10 correlation fingerprint).
+//
+// Error contract:
+//   • Cache lookup failure   → log warn, proceed to Gemini
+//   • Gemini failure         → 502/503, cache NOT written
+//   • Cache write failure    → log warn, STILL return the Gemini result
+
+router.get("/events/:id/correlations/analysis", async (req, res) => {
+  const parsed = GetEventParams.safeParse(req.params);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid params" });
+    return;
+  }
+
+  const numericId = parseInt(parsed.data.id, 10);
+  if (isNaN(numericId)) {
+    res.status(400).json({ error: "ID must be numeric" });
+    return;
+  }
+  const eventId    = BigInt(numericId);
+  const eventIdStr = String(numericId); // safe for log serialization
+
+  // 1. Load primary event
+  const [target] = await db
     .select()
     .from(eventsTable)
-    .where(
-      and(
-        eq(eventsTable.labId, targetEvent.labId),
-        sql`${eventsTable.id} != ${targetEvent.id}`,
-        sql`${eventsTable.detectionTime} BETWEEN ${startWindow.toISOString()} AND ${endWindow.toISOString()}`
+    .where(eq(eventsTable.id, eventId))
+    .limit(1);
+
+  if (!target) {
+    res.status(404).json({ error: "Event not found" });
+    return;
+  }
+
+  // 2. Compute correlations (deterministic engine — no LLM involvement here)
+  const candidates   = await fetchCandidates(target);
+  const correlations = computeCorrelations(target, candidates);
+
+  // 3. Build cache key
+  const correlationHash = buildCorrelationHash(eventIdStr, correlations);
+
+  // 4. Cache lookup — O(1) via unique index on (event_id, correlation_hash)
+  let cached: typeof aiCorrelationAnalysis.$inferSelect | undefined;
+  try {
+    [cached] = await db
+      .select()
+      .from(aiCorrelationAnalysis)
+      .where(
+        and(
+          eq(aiCorrelationAnalysis.eventId, eventId),
+          eq(aiCorrelationAnalysis.correlationHash, correlationHash)
+        )
       )
+      .limit(1);
+  } catch (lookupErr) {
+    // Non-fatal: if the cache table is unavailable, fall through to Gemini
+    logger.warn(
+      { err: lookupErr, eventId: eventIdStr, correlationHash },
+      "AI cache lookup failed — falling through to provider"
     );
-
-  // Haversine formula
-  function angularSeparation(ra1: number, dec1: number, ra2: number, dec2: number) {
-    const dToR = Math.PI / 180;
-    const rToD = 180 / Math.PI;
-    const sinDDec = Math.sin(((dec2 - dec1) * dToR) / 2);
-    const sinDRa = Math.sin(((ra2 - ra1) * dToR) / 2);
-    const a =
-      sinDDec * sinDDec +
-      Math.cos(dec1 * dToR) * Math.cos(dec2 * dToR) * sinDRa * sinDRa;
-    return 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * rToD;
   }
 
-  const getCompatibilityWeight = (type1: string, type2: string) => {
-    const pair = [type1, type2].sort().join("-");
-    switch (pair) {
-      case "GRB-GW": return 1.0;
-      case "EP-GW": return 0.8;
-      case "GRB-NU": return 0.8;
-      case "FRB-GW": return 0.5;
-      case "EP-NU": return 0.8;
-      default:
-        // Identical types get high weight assuming we want to find duplicated events
-        // across observatories.
-        if (type1 === type2) return 0.9;
-        return 0.3;
-    }
-  };
+  if (cached) {
+    logger.info(
+      { eventId: eventIdStr, correlationHash, model: cached.modelName },
+      "AI cache hit"
+    );
+    res.json({
+      ...(cached.analysisJson as CorrelationAnalysisResult),
+      cached:       true,
+      generated_at: cached.createdAt.toISOString(),
+      model:        cached.modelName,
+    });
+    return;
+  }
 
-  const results = [];
+  logger.info(
+    { eventId: eventIdStr, correlationHash, candidateCount: correlations.length },
+    "AI cache miss — calling provider"
+  );
 
-  for (const candidate of candidates) {
-    // Temporal Score (Gaussian)
-    const deltaTSeconds = (candidate.detectionTime.getTime() - targetEvent.detectionTime.getTime()) / 1000;
-    
-    // Vary sigma based on pair
-    const pair = [targetEvent.eventType, candidate.eventType].sort().join("-");
-    let sigmaT = 86400; // 1 day default
-    if (pair === "GRB-GW") sigmaT = 3600; // 1 hour
-    else if (pair === "EP-GW") sigmaT = 86400; // 24 hours
-    else if (pair === "GRB-NU") sigmaT = 604800; // 7 days
-    else if (pair === "FRB-GW") sigmaT = 86400; // 24 hours
-    
-    const temporalScore = Math.exp(-(deltaTSeconds * deltaTSeconds) / (2 * sigmaT * sigmaT));
+  // 5. Build the structured input for the agent
+  const correlationScores: Record<string, {
+    overall_score: number;
+    temporal_score: number;
+    spatial_score: number;
+    angular_separation_deg: number;
+    delta_t_seconds: number;
+    event_pair_type: string;
+    correlation_type: CorrelationType;
+  }> = {};
 
-    // Spatial Score (Gaussian)
-    const separationDeg = angularSeparation(
-      targetEvent.ra, targetEvent.dec,
-      candidate.ra, candidate.dec
+  for (const corr of correlations) {
+    correlationScores[corr.id] = {
+      overall_score:         corr.score,
+      temporal_score:        corr.temporalScore,
+      spatial_score:         corr.spatialScore,
+      angular_separation_deg: corr.angularSeparationDeg,
+      delta_t_seconds:       corr.deltaTSeconds,
+      event_pair_type:       [target.eventType, corr.eventType].sort().join("-"),
+      correlation_type:      corr.correlationType,
+    };
+  }
+
+  // 6. Call the AI agent — Gemini failure must never corrupt cache
+  let analysisResult: CorrelationAnalysisResult;
+  try {
+    analysisResult = await getAgent().analyze({
+      primary_event: {
+        id:                String(target.id),
+        eventId:           target.eventId,
+        eventType:         target.eventType,
+        observatory:       target.observatory,
+        detectionTime:     target.detectionTime.toISOString(),
+        ra:                target.ra,
+        dec:               target.dec,
+        errorRadius:       target.errorRadius,
+        snr:               target.snr,
+        far:               target.far,
+        galLat:            target.galLat,
+        galLon:            target.galLon,
+        sunDistance:       target.sunDistance,
+        moonDistance:      target.moonDistance,
+        fluence:           target.fluence           ?? null,
+        dm:                target.dm                ?? null,
+        t90:               target.t90               ?? null,
+        chirpMass:         target.chirpMass         ?? null,
+        luminosityDistance: target.luminosityDistance ?? null,
+        lifecycle:         target.lifecycle,
+      },
+      candidate_events: correlations.map((c) => ({
+        id:          c.id,
+        eventId:     c.eventId,
+        eventType:   c.eventType,
+        observatory: c.observatory,
+      })),
+      correlation_scores: correlationScores,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    logger.error(
+      { err, eventId: eventIdStr, correlationHash },
+      "AI provider call failed"
     );
 
-    // convert error radius from arcmin to degrees
-    const err1 = Math.max((targetEvent.errorRadius || 0) / 60, 0.1);
-    const err2 = Math.max((candidate.errorRadius || 0) / 60, 0.1);
-    const sigmaS = Math.sqrt(err1 * err1 + err2 * err2);
-    
-    const spatialScore = Math.exp(-(separationDeg * separationDeg) / (2 * sigmaS * sigmaS));
-
-    const wType = getCompatibilityWeight(targetEvent.eventType, candidate.eventType);
-
-    const finalScore = Math.round(wType * ((temporalScore + spatialScore) / 2) * 100);
-
-    if (finalScore > 1) {
-      results.push({
-        id: String(candidate.id),
-        eventId: candidate.eventId,
-        eventType: candidate.eventType,
-        observatory: candidate.observatory,
-        score: finalScore,
-        angularSeparationDeg: separationDeg,
-        deltaTSeconds,
-        spatialScore,
-        temporalScore
+    if (message.includes("GEMINI_API_KEY")) {
+      res.status(503).json({
+        error: "AI analysis is not configured. Set GEMINI_API_KEY to enable this feature.",
       });
+    } else {
+      res.status(502).json({ error: `AI provider error: ${message}` });
     }
+    return;
   }
 
-  // Sort descending and take top 10 matches
-  results.sort((a, b) => b.score - a.score);
-  res.json(results.slice(0, 10));
+  // 7. Persist to cache — runs in a transaction so stale rows are evicted atomically
+  const modelName = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+  const now       = new Date();
+
+  try {
+    await db.transaction(async (tx) => {
+      // Remove any cached analyses for this event whose hash no longer matches
+      // the current correlation set. Prevents unbounded row accumulation.
+      await tx
+        .delete(aiCorrelationAnalysis)
+        .where(
+          and(
+            eq(aiCorrelationAnalysis.eventId, eventId),
+            sql`${aiCorrelationAnalysis.correlationHash} != ${correlationHash}`
+          )
+        );
+
+      // Insert the fresh analysis; update in-place if same hash already exists
+      // (e.g. a concurrent request raced us to the write).
+      await tx
+        .insert(aiCorrelationAnalysis)
+        .values({
+          eventId,
+          correlationHash,
+          modelName,
+          analysisJson: analysisResult as unknown as Record<string, unknown>,
+          createdAt:    now,
+          updatedAt:    now,
+        })
+        .onConflictDoUpdate({
+          target: [aiCorrelationAnalysis.eventId, aiCorrelationAnalysis.correlationHash],
+          set: {
+            analysisJson: analysisResult as unknown as Record<string, unknown>,
+            modelName,
+            updatedAt:    now,
+          },
+        });
+    });
+
+    logger.info(
+      { eventId: eventIdStr, correlationHash, model: modelName },
+      "AI cache save success"
+    );
+  } catch (cacheErr) {
+    // Cache write failure must never prevent the client receiving its analysis.
+    logger.warn(
+      { err: cacheErr, eventId: eventIdStr, correlationHash },
+      "AI cache save failure"
+    );
+  }
+
+  res.json({
+    ...analysisResult,
+    cached:       false,
+    generated_at: now.toISOString(),
+    model:        modelName,
+  });
 });
 
 export default router;

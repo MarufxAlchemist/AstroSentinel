@@ -259,6 +259,22 @@ export const eventEmbeddings = coreSchema.table("event_embeddings", {
 export type EventEmbedding = typeof eventEmbeddings.$inferSelect;
 export type InsertEventEmbedding = typeof eventEmbeddings.$inferInsert;
 
+// ─── core.ai_correlation_analysis ────────────────────────────────────────────
+
+export const aiCorrelationAnalysis = coreSchema.table("ai_correlation_analysis", {
+  id: bigserial("id", { mode: "bigint" }).primaryKey(),
+  eventId: bigserial("event_id", { mode: "bigint" }).notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  correlationHash: text("correlation_hash").notNull(),
+  modelName: text("model_name").notNull().default("gemini-2.5-flash"),
+  analysisJson: jsonb("analysis_json").notNull().$type<Record<string, unknown>>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type AiCorrelationAnalysis = typeof aiCorrelationAnalysis.$inferSelect;
+export type InsertAiCorrelationAnalysis = typeof aiCorrelationAnalysis.$inferInsert;
+
 // ─── Relations ───────────────────────────────────────────────────────────────
 
 export const eventsRelations = relations(events, ({ one, many }) => ({
@@ -306,4 +322,8 @@ export const eventAnnotationsRelations = relations(eventAnnotations, ({ one, man
 export const eventEmbeddingsRelations = relations(eventEmbeddings, ({ one }) => ({
   event: one(events, { fields: [eventEmbeddings.eventId], references: [events.id] }),
   lab: one(labs, { fields: [eventEmbeddings.labId], references: [labs.id] }),
+}));
+
+export const aiCorrelationAnalysisRelations = relations(aiCorrelationAnalysis, ({ one }) => ({
+  event: one(events, { fields: [aiCorrelationAnalysis.eventId], references: [events.id] }),
 }));
