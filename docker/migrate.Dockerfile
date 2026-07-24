@@ -51,8 +51,11 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 COPY lib/db/ ./lib/db/
 
 # ── Run migrations ────────────────────────────────────────────────────────────
-# drizzle-kit is a devDependency of @workspace/db, so pnpm installs it at:
-#   /workspace/lib/db/node_modules/.bin/drizzle-kit
-# NOT at the workspace root node_modules. The CMD must cd into lib/db first.
+# drizzle-kit is a devDependency of @workspace/db → lives at lib/db/node_modules/.bin/
+# NO_COLOR=1  → disables the Ora spinner (which uses \r to overwrite lines,
+#               hiding the actual error in CI/non-TTY environments).
+# 2>&1 | tr   → merges stderr into stdout and converts \r to \n so every
+#               error line is preserved in GitHub Actions logs.
+# pipefail    → propagates drizzle-kit's non-zero exit through the pipe.
 # DATABASE_URL is injected at runtime by docker-compose.
-CMD ["sh", "-c", "cd /workspace/lib/db && node_modules/.bin/drizzle-kit migrate --config ./drizzle.config.ts"]
+CMD ["/bin/bash", "-c", "set -o pipefail; cd /workspace/lib/db && NO_COLOR=1 node_modules/.bin/drizzle-kit migrate --config ./drizzle.config.ts 2>&1 | tr '\\r' '\\n'"]
