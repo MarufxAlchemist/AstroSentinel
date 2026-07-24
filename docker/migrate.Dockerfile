@@ -68,6 +68,10 @@ async function run() {
   
   console.log("Connecting to database...");
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  
+  console.log("Ensuring required PostgreSQL extensions exist...");
+  await pool.query('CREATE EXTENSION IF NOT EXISTS ltree;');
+  
   const db = drizzle(pool);
   
   console.log("Running migrations...");
