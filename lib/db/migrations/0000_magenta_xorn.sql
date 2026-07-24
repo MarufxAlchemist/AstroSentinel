@@ -4,7 +4,7 @@ CREATE SCHEMA "audit";
 --> statement-breakpoint
 CREATE SCHEMA "catalog";
 --> statement-breakpoint
-CREATE SCHEMA "core";
+CREATE SCHEMA "core"; 
 --> statement-breakpoint
 CREATE SCHEMA "identity";
 --> statement-breakpoint
