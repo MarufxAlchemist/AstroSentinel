@@ -1,0 +1,217 @@
+##############################################################################
+# .github/workflows/ci.yml
+# Cosmic Alert System — CI Pipeline
+#
+# Triggers
+# ────────
+#   push:        main, develop
+#   pull_request: main
+#
+# Jobs
+# ────
+#   1. build          — Install deps, build TypeScript, build frontend
+#   2. docker-build   — Validate docker-compose.prod.yml, build all images
+#   3. integration    — Start core services, verify API health endpoint
+#
+# This pipeline does NOT auto-deploy. It only builds and validates.
+# Deployment is manual: ssh to VPS and run deploy/scripts/update.sh
+##############################################################################
+
+name: CI — Build & Validate
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ── Job 1: TypeScript & Frontend build ─────────────────────────────────────────
+jobs:
+  build:
+    name: TypeScript & Frontend Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build api-server (esbuild)
+        run: pnpm --filter @workspace/api-server run build
+
+      - name: Build frontend (Vite)
+        run: pnpm --filter @workspace/astro-sentinel run build
+        env:
+          PORT: "5173"
+          BASE_PATH: "/"
+
+      - name: Verify build outputs exist
+        run: |
+          test -f artifacts/api-server/dist/index.mjs      && echo "✓ api-server bundle OK"
+          test -d artifacts/astro-sentinel/dist/public      && echo "✓ frontend bundle OK"
+          test -f artifacts/astro-sentinel/dist/public/index.html && echo "✓ index.html present"
+
+# ── Job 2: Docker image build & compose validation ─────────────────────────────
+  docker-build:
+    name: Docker Build & Compose Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create CI test environment
+        run: |
+          # Generate .env from template with CI-safe placeholder values.
+          # POSTGRES_PASSWORD has no special characters so URL encoding is identical.
+          cp .env.example .env
+          sed -i 's/CHANGE_ME/ci_test_value/g' .env
+          # Append required Docker-specific variables not in .env.example
+          echo "POSTGRES_PASSWORD_URLENC=ci_test_value" >> .env
+          # Verify required variables exist
+          grep -q "POSTGRES_PASSWORD=" .env && echo "✓ POSTGRES_PASSWORD set"
+          grep -q "JWT_SECRET="        .env && echo "✓ JWT_SECRET set"
+
+      - name: Create CI backend credentials
+        run: |
+          printf "GCN_CLIENT_ID=ci_test\nGCN_CLIENT_SECRET=ci_test\n" > backend/.env
+
+      - name: Validate docker-compose.prod.yml syntax
+        run: |
+          docker compose -f docker-compose.prod.yml config --quiet
+          echo "✓ docker-compose.prod.yml is syntactically valid"
+
+      - name: Build all Docker images
+        run: |
+          DOCKER_BUILDKIT=1 docker compose -f docker-compose.prod.yml build \
+            --progress plain
+        env:
+          DOCKER_BUILDKIT: "1"
+
+      - name: Verify images were created
+        run: |
+          docker compose -f docker-compose.prod.yml config --services | while read svc; do
+            echo "Service: $svc"
+          done
+          docker images | grep -v "^REPOSITORY" | head -20
+
+# ── Job 3: Integration smoke test ──────────────────────────────────────────────
+  integration:
+    name: Container Startup Validation
+    runs-on: ubuntu-latest
+    needs: docker-build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create CI test environment
+        run: |
+          cp .env.example .env
+          sed -i 's/CHANGE_ME/ci_test_value/g' .env
+          echo "POSTGRES_PASSWORD_URLENC=ci_test_value" >> .env
+          printf "GCN_CLIENT_ID=ci_test\nGCN_CLIENT_SECRET=ci_test\n" > backend/.env
+
+      - name: Build images
+        run: DOCKER_BUILDKIT=1 docker compose -f docker-compose.prod.yml build --progress plain
+        env:
+          DOCKER_BUILDKIT: "1"
+
+      - name: Start database services
+        run: |
+          docker compose -f docker-compose.prod.yml up -d postgres
+          echo "Waiting for postgres to be healthy..."
+
+      - name: Wait for postgres health
+        run: |
+          for i in $(seq 1 30); do
+            STATUS=$(docker compose -f docker-compose.prod.yml ps --format json postgres 2>/dev/null | python3 -c "import sys,json; rows=list(map(json.loads,filter(None,sys.stdin.read().splitlines()))); print(rows[0].get('Health','') if rows else 'unknown')" 2>/dev/null || echo "unknown")
+            echo "  postgres status: $STATUS (attempt $i/30)"
+            if [[ "$STATUS" == "healthy" ]]; then
+              echo "✓ postgres is healthy"
+              break
+            fi
+            if [[ $i -eq 30 ]]; then
+              echo "✗ postgres did not become healthy in 150 seconds"
+              docker compose -f docker-compose.prod.yml logs postgres
+              exit 1
+            fi
+            sleep 5
+          done
+
+      - name: Run database migrations
+        run: |
+          docker compose -f docker-compose.prod.yml run --rm migrate
+          echo "✓ Migrations completed"
+
+      - name: Start application services
+        run: |
+          docker compose -f docker-compose.prod.yml up -d python-backend api-server
+
+      - name: Wait for api-server health (up to 3 minutes)
+        run: |
+          for i in $(seq 1 36); do
+            STATUS=$(docker compose -f docker-compose.prod.yml ps --format json api-server 2>/dev/null | python3 -c "import sys,json; rows=list(map(json.loads,filter(None,sys.stdin.read().splitlines()))); print(rows[0].get('Health','') if rows else 'unknown')" 2>/dev/null || echo "unknown")
+            echo "  api-server status: $STATUS (attempt $i/36)"
+            if [[ "$STATUS" == "healthy" ]]; then
+              echo "✓ api-server is healthy"
+              break
+            fi
+            if [[ $i -eq 36 ]]; then
+              echo "✗ api-server did not become healthy in 3 minutes"
+              docker compose -f docker-compose.prod.yml logs api-server
+              docker compose -f docker-compose.prod.yml logs python-backend
+              exit 1
+            fi
+            sleep 5
+          done
+
+      - name: Verify API health endpoint responds correctly
+        run: |
+          RESPONSE=$(docker compose -f docker-compose.prod.yml exec -T api-server \
+            node --input-type=module \
+            -e "fetch('http://localhost:8000/api/healthz').then(r=>r.json()).then(d=>process.stdout.write(JSON.stringify(d))).catch(e=>{console.error(e.message);process.exit(1)})")
+          echo "Health response: $RESPONSE"
+          echo "$RESPONSE" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); assert d.get('status')=='ok', f'Expected status=ok, got: {d}'; print('✓ API health check passed')"
+
+      - name: Print all container statuses
+        if: always()
+        run: docker compose -f docker-compose.prod.yml ps
+
+      - name: Print container logs on failure
+        if: failure()
+        run: |
+          echo "=== postgres ===" && docker compose -f docker-compose.prod.yml logs --tail=50 postgres  || true
+          echo "=== migrate  ===" && docker compose -f docker-compose.prod.yml logs --tail=50 migrate   || true
+          echo "=== python   ===" && docker compose -f docker-compose.prod.yml logs --tail=50 python-backend || true
+          echo "=== api-server ===" && docker compose -f docker-compose.prod.yml logs --tail=50 api-server || true
+
+      - name: Cleanup
+        if: always()
+        run: docker compose -f docker-compose.prod.yml down -v --remove-orphans

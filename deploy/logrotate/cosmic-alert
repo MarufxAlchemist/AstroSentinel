@@ -1,0 +1,46 @@
+# /etc/logrotate.d/cosmic-alert
+# ─────────────────────────────────────────────────────────────────────────────
+# Logrotate configuration for Cosmic Alert System host-level logs.
+#
+# INSTALLATION
+#   sudo cp deploy/logrotate/cosmic-alert /etc/logrotate.d/cosmic-alert
+#   sudo logrotate -d /etc/logrotate.d/cosmic-alert   # dry-run test
+#   sudo logrotate /etc/logrotate.d/cosmic-alert       # manual run
+#
+# Docker container logs are managed separately via json-file driver options
+# (max-size, max-file) configured in docker-compose.prod.yml.
+# ─────────────────────────────────────────────────────────────────────────────
+
+/var/log/cosmic-alert/*.log {
+    # Rotate daily
+    daily
+
+    # Keep 14 days of compressed logs
+    rotate 14
+
+    # Compress rotated logs with gzip
+    compress
+
+    # Delay compression by one cycle (so today's log can still be written)
+    delaycompress
+
+    # Do not error if log file is missing
+    missingok
+
+    # Do not rotate empty log files
+    notifempty
+
+    # Use date-based suffix instead of numeric (backup.log.2024-07-24)
+    dateext
+    dateformat -%Y-%m-%d
+
+    # Create new log file with correct permissions after rotation
+    create 0640 root adm
+
+    # Run the post-rotate hook after all logs in this group are rotated
+    sharedscripts
+    postrotate
+        # Nothing to signal — Docker writes directly to these files.
+        true
+    endscript
+}

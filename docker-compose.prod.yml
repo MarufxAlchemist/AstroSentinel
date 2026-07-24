@@ -1,32 +1,48 @@
 ##############################################################################
-# docker-compose.prod.yml — Cosmic Alert System (PRODUCTION)
+# docker-compose.prod.yml — Cosmic Alert System (PRODUCTION VPS)
 #
 # Self-contained production stack. Run with:
-#   docker compose -f docker-compose.prod.yml up --build
+#   docker compose -f docker-compose.prod.yml up -d
 #
 # Services
 # ────────
-#   postgres        PostgreSQL 16-alpine         :5432
-#   migrate         drizzle-kit migrate (one-shot, exits 0 on success)
-#   python-backend  FastAPI + uvicorn             :8001
-#   api-server      Express + WebSocket + Drizzle :8000
-#   frontend        nginx (Vite bundle)           :5173
+#   postgres        PostgreSQL 16-alpine          (internal only, no host port)
+#   migrate         drizzle-kit migrate           (one-shot, exits 0)
+#   python-backend  FastAPI + uvicorn             (internal only)
+#   api-server      Express + WebSocket + Drizzle (internal only)
+#   frontend        nginx serving Vite bundle     (internal only)
+#   nginx           Reverse proxy                 :80 :443 (only public ports)
+#   backup          pg_dump to volume             (profile=backup, run manually)
 #
-# Startup order (enforced by healthcheck-based depends_on)
-# ─────────────────────────────────────────────────────────
-#   1. postgres          (healthy)
-#   2. migrate           (completed_successfully)  — runs SQL migrations
-#   3. python-backend    (healthy)
-#   4. api-server        (healthy)  ← waits for postgres + migrate + python-backend
-#   5. frontend          (started)  ← waits for api-server healthy
+# Startup order (healthcheck-based depends_on)
+# ─────────────────────────────────────────────
+#   postgres (healthy)
+#       → migrate (completed_successfully)
+#       → python-backend (healthy)
+#       → api-server (healthy)
+#       → frontend (healthy)
+#       → nginx (started)
 #
-# All secrets come from .env at the repo root. Never hardcoded here.
-# DOCKER_BUILDKIT=1 is set inline — enables BuildKit cache mounts in Dockerfiles.
+# Networking
+# ──────────
+# All services share the `cosmic-prod` bridge network.
+# ONLY the nginx service has host port mappings (80, 443).
+# All other services are unreachable from outside the Docker host.
+# Inter-service communication uses Docker service names.
+#
+# Secrets
+# ───────
+# All sensitive values come from .env at the repo root.
+# NEVER hardcoded in this file. No secrets are baked into images.
+# Required: POSTGRES_PASSWORD, POSTGRES_PASSWORD_URLENC, JWT_SECRET,
+#           GOOGLE_CLIENT_ID, GEMINI_API_KEY, ORCID_CLIENT_ID,
+#           ORCID_CLIENT_SECRET (via .env)
+#           GCN_CLIENT_ID, GCN_CLIENT_SECRET (via backend/.env)
 ##############################################################################
 
 services:
 
-  # ── 1. PostgreSQL ─────────────────────────────────────────────────────────
+  # ── 1. PostgreSQL ───────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     restart: always
@@ -37,18 +53,16 @@ services:
       POSTGRES_DB:       ${POSTGRES_DB:-Astro-sentinel}
 
     volumes:
-      # Named volume — data survives container recreation and `docker compose down`.
-      # Only destroyed by `docker compose -f docker-compose.prod.yml down -v`.
       - postgres_prod_data:/var/lib/postgresql/data
+      # Backup volume also mounted here so backup container can reach it
+      # (backup container has its own connection, this is just for reference)
 
-    ports:
-      - "5432:5432"
-
+    # NO host ports — postgres is internal only.
+    # To connect from the host: docker compose exec postgres psql -U postgres
     networks:
       - cosmic-prod
 
     healthcheck:
-      # pg_isready returns 0 when postgres accepts connections.
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-Astro-sentinel}"]
       interval: 5s
       timeout: 5s
@@ -61,14 +75,14 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # ── 2. Database migrations (one-shot) ─────────────────────────────────────
+  # ── 2. Database migrations (one-shot) ──────────────────────────────────────
   migrate:
     build:
       context: .
       dockerfile: docker/migrate.Dockerfile
 
-    # One-shot: runs drizzle-kit migrate then exits.
-    # restart: "no" ensures Docker never restarts this container.
+    # Exits after running drizzle-kit migrate.
+    # api-server depends on service_completed_successfully.
     restart: "no"
 
     environment:
@@ -87,7 +101,7 @@ services:
         max-size: "5m"
         max-file: "2"
 
-  # ── 3. Python backend (GCN Kafka consumer + FastAPI WebSocket) ─────────────
+  # ── 3. Python backend (GCN Kafka consumer + FastAPI WebSocket) ──────────────
   python-backend:
     build:
       context: ./backend
@@ -98,14 +112,11 @@ services:
     env_file:
       - ./backend/.env   # GCN_CLIENT_ID, GCN_CLIENT_SECRET
 
-    ports:
-      - "8001:8001"
-
+    # NO host ports — only reachable via nginx proxy and api-server internally.
     networks:
       - cosmic-prod
 
     healthcheck:
-      # curl -f returns non-zero on HTTP error. /health returns {"status":"healthy"}.
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 10s
       timeout: 5s
@@ -118,7 +129,7 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # ── 4. API server (Express + Drizzle ORM + WebSocket) ─────────────────────
+  # ── 4. API server (Express + Drizzle ORM + WebSocket) ──────────────────────
   api-server:
     build:
       context: .
@@ -127,28 +138,23 @@ services:
     restart: always
 
     environment:
-      PORT:                 "8000"
-      NODE_ENV:             production
+      PORT:                "8000"
+      NODE_ENV:            production
 
-      # Uses postgres (Docker service name) not localhost
-      DATABASE_URL:         "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD_URLENC}@postgres:5432/${POSTGRES_DB:-Astro-sentinel}"
+      DATABASE_URL:        "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD_URLENC}@postgres:5432/${POSTGRES_DB:-Astro-sentinel}"
+      PYTHON_BACKEND_URL:  "ws://python-backend:8001/api/ws"
 
-      # Uses python-backend (Docker service name) not localhost
-      PYTHON_BACKEND_URL:   "ws://python-backend:8001/api/ws"
+      JWT_SECRET:          ${JWT_SECRET}
+      GOOGLE_CLIENT_ID:    ${GOOGLE_CLIENT_ID}
 
-      JWT_SECRET:           ${JWT_SECRET}
-      GOOGLE_CLIENT_ID:     ${GOOGLE_CLIENT_ID}
+      GEMINI_API_KEY:      ${GEMINI_API_KEY}
+      GEMINI_MODEL:        ${GEMINI_MODEL:-gemini-2.5-flash}
+      GEMINI_TIMEOUT_MS:   ${GEMINI_TIMEOUT_MS:-45000}
 
-      GEMINI_API_KEY:       ${GEMINI_API_KEY}
-      GEMINI_MODEL:         ${GEMINI_MODEL:-gemini-2.5-flash}
-      GEMINI_TIMEOUT_MS:    ${GEMINI_TIMEOUT_MS:-45000}
+      ORCID_CLIENT_ID:     ${ORCID_CLIENT_ID}
+      ORCID_CLIENT_SECRET: ${ORCID_CLIENT_SECRET}
 
-      ORCID_CLIENT_ID:      ${ORCID_CLIENT_ID}
-      ORCID_CLIENT_SECRET:  ${ORCID_CLIENT_SECRET}
-
-    ports:
-      - "8000:8000"
-
+    # NO host ports — nginx reverse proxy routes /api/* to this service.
     networks:
       - cosmic-prod
 
@@ -156,15 +162,11 @@ services:
       postgres:
         condition: service_healthy
       migrate:
-        # Wait for migrations to complete before starting the API.
-        # This ensures all tables/columns exist before Drizzle queries run.
         condition: service_completed_successfully
       python-backend:
         condition: service_healthy
 
     healthcheck:
-      # /api/healthz is defined in src/routes/health.ts → GET /healthz → { status: "ok" }
-      # Node 22 native fetch works in ESM context (no require needed).
       test: ["CMD-SHELL", "node --input-type=module -e \"fetch('http://localhost:8000/api/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 10s
       timeout: 8s
@@ -177,7 +179,7 @@ services:
         max-size: "10m"
         max-file: "5"
 
-  # ── 5. Frontend (nginx serving Vite bundle + /api proxy) ──────────────────
+  # ── 5. Frontend (nginx serving Vite bundle, internal only) ─────────────────
   frontend:
     build:
       context: .
@@ -185,9 +187,12 @@ services:
 
     restart: always
 
-    ports:
-      - "5173:5173"
+    volumes:
+      # Override the default nginx.conf (which has API proxy) with the
+      # serve-only version — top-level nginx handles all API routing.
+      - ./deploy/nginx/frontend-internal.conf:/etc/nginx/conf.d/astro-sentinel.conf:ro
 
+    # NO host ports — top-level nginx routes / to this service.
     networks:
       - cosmic-prod
 
@@ -196,7 +201,6 @@ services:
         condition: service_healthy
 
     healthcheck:
-      # curl -f returns non-zero on HTTP error — confirms nginx is serving.
       test: ["CMD", "curl", "-f", "http://localhost:5173/"]
       interval: 15s
       timeout: 5s
@@ -209,16 +213,119 @@ services:
         max-size: "5m"
         max-file: "3"
 
-# ── Named volumes ─────────────────────────────────────────────────────────────
+  # ── 6. Nginx reverse proxy (ONLY publicly exposed service) ─────────────────
+  nginx:
+    image: nginx:alpine
+    restart: always
+
+    ports:
+      # These are the ONLY host port mappings in the entire stack.
+      - "80:80"
+      - "443:443"
+
+    volumes:
+      # Main nginx config (top-level reverse proxy)
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+
+      # Let's Encrypt webroot challenge directory (must be persistent)
+      - certbot_webroot:/var/www/certbot
+
+      # SSL certificates (populated by certbot when ready)
+      - certbot_certs:/etc/letsencrypt:ro
+
+      # Persistent nginx logs (survives container recreations)
+      - nginx_logs:/var/log/nginx
+
+    depends_on:
+      frontend:
+        condition: service_healthy
+      api-server:
+        condition: service_healthy
+
+    networks:
+      - cosmic-prod
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health/api"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ── 7. Backup (manual trigger only via profiles) ────────────────────────────
+  # Run with:
+  #   docker compose -f docker-compose.prod.yml --profile backup run --rm backup
+  # Or via cron: add deploy/scripts/backup.sh to crontab on the host.
+  backup:
+    image: postgres:16-alpine
+    profiles:
+      - backup
+    restart: "no"
+
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+
+    volumes:
+      - postgres_backups:/backups
+
+    networks:
+      - cosmic-prod
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    # Creates a timestamped gzipped backup, then prunes backups older than 7 days.
+    command: >
+      sh -c '
+        DATE=$$(date +%Y%m%d_%H%M%S) &&
+        FILE="/backups/backup_$$DATE.sql.gz" &&
+        echo "[backup] Starting pg_dump → $$FILE" &&
+        pg_dump -h postgres -U ${POSTGRES_USER:-postgres} ${POSTGRES_DB:-Astro-sentinel} | gzip > $$FILE &&
+        echo "[backup] Backup complete: $$(du -sh $$FILE | cut -f1)" &&
+        find /backups -name "backup_*.sql.gz" -mtime +7 -delete &&
+        echo "[backup] Old backups pruned (kept last 7 days)"
+      '
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "2m"
+        max-file: "2"
+
+# ── Named volumes ──────────────────────────────────────────────────────────────
 volumes:
   postgres_prod_data:
-    # Separate volume name from dev to prevent data cross-contamination.
-    # Data persists across restarts and `docker compose down`.
+    # PostgreSQL data — survives container recreation.
     # Destroyed only with: docker compose -f docker-compose.prod.yml down -v
 
-# ── Networks ──────────────────────────────────────────────────────────────────
+  nginx_logs:
+    # Persistent nginx access/error logs (useful for audits and debugging)
+
+  certbot_webroot:
+    # Let's Encrypt ACME challenge webroot — shared between nginx and certbot
+
+  certbot_certs:
+    # SSL certificates from Let's Encrypt — populated by certbot
+
+  postgres_backups:
+    # pg_dump backup files — populated by the backup service
+    # Mount to a host path for off-server backup:
+    #   driver_opts:
+    #     type: none
+    #     o: bind
+    #     device: /opt/cosmic-backups
+
+# ── Networks ───────────────────────────────────────────────────────────────────
 networks:
   cosmic-prod:
     driver: bridge
-    # All inter-service communication uses Docker service names.
-    # No service references localhost to reach another service.
+    # All services communicate via Docker service names.
+    # Only nginx exposes host ports (80, 443).
+    # All other services are unreachable from outside this host.
