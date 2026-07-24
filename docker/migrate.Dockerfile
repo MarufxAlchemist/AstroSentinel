@@ -37,6 +37,7 @@ COPY lib/api-spec/package.json  ./lib/api-spec/package.json
 COPY lib/api-client-react/package.json    ./lib/api-client-react/package.json
 COPY artifacts/api-server/package.json   ./artifacts/api-server/package.json
 COPY artifacts/astro-sentinel/package.json ./artifacts/astro-sentinel/package.json
+COPY scripts/package.json                ./scripts/package.json
 
 # ── Install dependencies with BuildKit pnpm cache ─────────────────────────────
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
