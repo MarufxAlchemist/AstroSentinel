@@ -71,6 +71,7 @@ async function run() {
   
   console.log("Ensuring required PostgreSQL extensions exist...");
   await pool.query('CREATE EXTENSION IF NOT EXISTS ltree;');
+  await pool.query('CREATE EXTENSION IF NOT EXISTS postgis;');
   
   const db = drizzle(pool);
   
