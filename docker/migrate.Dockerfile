@@ -52,10 +52,8 @@ COPY lib/db/ ./lib/db/
 
 # ── Run migrations ────────────────────────────────────────────────────────────
 # drizzle-kit is a devDependency of @workspace/db → lives at lib/db/node_modules/.bin/
-# NO_COLOR=1  → disables the Ora spinner (which uses \r to overwrite lines,
-#               hiding the actual error in CI/non-TTY environments).
-# 2>&1 | tr   → merges stderr into stdout and converts \r to \n so every
-#               error line is preserved in GitHub Actions logs.
-# pipefail    → propagates drizzle-kit's non-zero exit through the pipe.
+# Output is captured to /tmp/drizzle.log first, then printed after exit.
+# This defeats drizzle-kit's Ora spinner which uses ANSI escape codes to
+# overwrite lines in-place — in CI those rewrites erase the real error text.
 # DATABASE_URL is injected at runtime by docker-compose.
-CMD ["/bin/bash", "-c", "set -o pipefail; cd /workspace/lib/db && NO_COLOR=1 node_modules/.bin/drizzle-kit migrate --config ./drizzle.config.ts 2>&1 | tr '\\r' '\\n'"]
+CMD ["/bin/bash", "-c", "cd /workspace/lib/db && NO_COLOR=1 node_modules/.bin/drizzle-kit migrate --config ./drizzle.config.ts > /tmp/drizzle.log 2>&1; EXIT=$?; echo '=== drizzle-kit output ==='; tr '\\r' '\\n' < /tmp/drizzle.log; echo '=== exit code:' $EXIT '==='; exit $EXIT"]
