@@ -5,15 +5,50 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1780902512355,
+      "when": 1784884352876,
       "tag": "0000_magenta_xorn",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1780905037055,
+      "when": 1784884352877,
       "tag": "0001_overrated_ultimo",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784884352878,
+      "tag": "0002_event_bookmarks",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784884352879,
+      "tag": "0003_alert_filtering",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784884352880,
+      "tag": "0004_event_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784884352881,
+      "tag": "0005_bootstrap_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784884352882,
+      "tag": "0006_ai_correlation_analysis",
       "breakpoints": true
     }
   ]
