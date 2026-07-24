@@ -26,6 +26,10 @@ WORKDIR /workspace
 # ── Workspace manifests — copied before source for layer cache ────────────────
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 
+# tsconfig.base.json is extended by lib/db/tsconfig.json (and all other lib packages).
+# drizzle-kit parses drizzle.config.ts via TypeScript, so the extends chain must resolve.
+COPY tsconfig.base.json ./
+
 # Only the packages needed for migration
 COPY lib/db/package.json        ./lib/db/package.json
 COPY lib/api-zod/package.json   ./lib/api-zod/package.json

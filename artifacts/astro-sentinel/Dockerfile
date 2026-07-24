@@ -28,6 +28,12 @@ WORKDIR /workspace
 # ── Workspace manifests (cached layer) ────────────────────────────────────────
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 
+# tsconfig.base.json must be present before the build step:
+# artifacts/astro-sentinel/tsconfig.json extends "../../tsconfig.base.json"
+# which resolves to /workspace/tsconfig.base.json inside the builder stage.
+# Without it, Vite's TypeScript compilation fails with "File not found".
+COPY tsconfig.base.json ./
+
 COPY lib/db/package.json                    ./lib/db/package.json
 COPY lib/api-zod/package.json               ./lib/api-zod/package.json
 COPY lib/api-spec/package.json              ./lib/api-spec/package.json

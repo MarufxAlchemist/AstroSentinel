@@ -30,6 +30,10 @@ WORKDIR /workspace
 # These rarely change — Docker caches the install layer until any manifest changes.
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 
+# tsconfig.base.json is extended by lib/* and artifacts/*/tsconfig.json files.
+# Must be available before the build step so TypeScript can resolve the chain.
+COPY tsconfig.base.json ./
+
 COPY lib/db/package.json                    ./lib/db/package.json
 COPY lib/api-zod/package.json               ./lib/api-zod/package.json
 COPY lib/api-spec/package.json              ./lib/api-spec/package.json
