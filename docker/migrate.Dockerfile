@@ -51,6 +51,22 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 COPY lib/db/ ./lib/db/
 
 # ── Run migrations ────────────────────────────────────────────────────────────
-# DATABASE_URL is injected at runtime by docker-compose.
-# drizzle-kit migrate exits 0 on success, non-zero on failure.
-CMD ["pnpm", "--filter", "@workspace/db", "run", "migrate"]
+# Run drizzle-kit directly (not via pnpm script) so stderr is never swallowed.
+# Full diagnostic output is printed first so CI logs show the exact failure.
+CMD ["/bin/sh", "-c", "\
+  set -e; \
+  echo '=== [migrate] pwd ==='; pwd; \
+  echo '=== [migrate] ls -la /workspace ==='; ls -la /workspace; \
+  echo '=== [migrate] ls -la /workspace/lib/db ==='; ls -la /workspace/lib/db; \
+  echo '=== [migrate] ls -la /workspace/lib/db/migrations ==='; ls -la /workspace/lib/db/migrations; \
+  echo '=== [migrate] cat drizzle.config.ts ==='; cat /workspace/lib/db/drizzle.config.ts; \
+  echo '=== [migrate] printenv (sorted) ==='; printenv | sort; \
+  echo '=== [migrate] node -v ==='; node -v; \
+  echo '=== [migrate] pnpm -v ==='; pnpm -v; \
+  echo '=== [migrate] running drizzle-kit migrate directly ==='; \
+  cd /workspace/lib/db && \
+  node --trace-uncaught /workspace/node_modules/.bin/drizzle-kit migrate --config ./drizzle.config.ts 2>&1; \
+  EXIT=$?; \
+  echo \"=== [migrate] drizzle-kit exited with code $EXIT ===\"; \
+  exit $EXIT \
+"]
