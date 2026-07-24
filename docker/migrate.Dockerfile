@@ -50,10 +50,33 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 #   - migrations/meta/_journal.json → which ones are already applied
 COPY lib/db/ ./lib/db/
 
+# ── Migration runner script ───────────────────────────────────────────────────
+# We use a Node.js child-process wrapper instead of a shell command because
+# drizzle-kit emits ANSI escape codes (cursor movement, erase-line) that defeat
+# both `tr '\r' '\n'` and file-redirect approaches in CI/non-TTY environments.
+# spawnSync with stdio:'pipe' intercepts output before any codes are interpreted.
+RUN cat > /run-migrate.cjs << 'JSEOF'
+const { spawnSync } = require('child_process');
+const r = spawnSync(
+  'node_modules/.bin/drizzle-kit',
+  ['migrate', '--config', './drizzle.config.ts'],
+  {
+    cwd: '/workspace/lib/db',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' }
+  }
+);
+const strip = s => s.replace(/\x1B\[[0-9;]*[A-Za-z]/g, '').replace(/\r/g, '\n');
+const out = strip((r.stdout || Buffer.alloc(0)).toString());
+const err = strip((r.stderr || Buffer.alloc(0)).toString());
+console.log('=== drizzle-kit stdout ===');
+process.stdout.write(out);
+console.log('=== drizzle-kit stderr ===');
+process.stderr.write(err);
+console.log('=== exit code:', r.status, '===');
+process.exit(r.status !== null ? r.status : 1);
+JSEOF
+
 # ── Run migrations ────────────────────────────────────────────────────────────
-# drizzle-kit is a devDependency of @workspace/db → lives at lib/db/node_modules/.bin/
-# Output is captured to /tmp/drizzle.log first, then printed after exit.
-# This defeats drizzle-kit's Ora spinner which uses ANSI escape codes to
-# overwrite lines in-place — in CI those rewrites erase the real error text.
 # DATABASE_URL is injected at runtime by docker-compose.
-CMD ["/bin/bash", "-c", "cd /workspace/lib/db && NO_COLOR=1 node_modules/.bin/drizzle-kit migrate --config ./drizzle.config.ts > /tmp/drizzle.log 2>&1; EXIT=$?; echo '=== drizzle-kit output ==='; tr '\\r' '\\n' < /tmp/drizzle.log; echo '=== exit code:' $EXIT '==='; exit $EXIT"]
+CMD ["node", "/run-migrate.cjs"]
