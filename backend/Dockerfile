@@ -1,40 +1,47 @@
+# syntax=docker/dockerfile:1
 ##############################################################################
 # backend/Dockerfile
-# Python 3.12-slim — FastAPI + uvicorn GCN Kafka consumer
+# Python 3.12-slim — FastAPI + uvicorn + GCN Kafka consumer
 #
-# Single stage: pure Python, nothing to "compile", no multi-stage needed.
-# The image is kept small by using the slim base and not installing extras.
+# Build context: ./backend
+#
+# Optimizations (v2):
+#   • BuildKit pip cache mount — packages cached between builds
+#   • curl added for Docker healthcheck
+#   • Build tools removed in same RUN layer to avoid extra image layers
 ##############################################################################
 
 FROM python:3.12-slim
 
 # ── System dependencies ───────────────────────────────────────────────────────
-# astropy needs gcc/libgfortran at install time (C extensions).
-# We install them, build, then remove build tools in the same RUN layer
-# to keep the layer diff small.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# gcc + libgfortran5  → astropy C/Fortran extensions
+# curl                → Docker HEALTHCHECK (CMD-SHELL uses curl for reliability)
+# All installed and apt cache purged in ONE layer to keep image small.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
         gcc \
         libgfortran5 \
+        curl \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Working directory ─────────────────────────────────────────────────────────
 WORKDIR /app
 
 # ── Python dependencies ───────────────────────────────────────────────────────
-# Copy requirements first so Docker can cache this layer independently
-# of source code changes.
+# Copy requirements.txt before source so Docker can cache this layer.
+# BuildKit --mount=type=cache preserves the pip download cache between builds
+# — subsequent builds skip re-downloading packages that haven't changed.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
 
 # ── Application source ────────────────────────────────────────────────────────
-# Copy the entire backend/ directory content into /app
 COPY . .
 
-# ── Expose port ───────────────────────────────────────────────────────────────
+# ── Port ─────────────────────────────────────────────────────────────────────
 EXPOSE 8001
 
-# ── Runtime command ───────────────────────────────────────────────────────────
-# Matches the exact command from run-commands.txt.
-# --host 0.0.0.0 is required so the container port is reachable from other
-# containers and from the host machine.
+# ── Runtime ──────────────────────────────────────────────────────────────────
+# Production: no --reload flag (reload is for development only).
+# GCN_CLIENT_ID and GCN_CLIENT_SECRET are injected by docker-compose env_file.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]

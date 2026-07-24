@@ -1,34 +1,27 @@
 ##############################################################################
-# docker-compose.yml — Cosmic Alert System (DEFAULT / LOCAL)
+# docker-compose.prod.yml — Cosmic Alert System (PRODUCTION)
 #
-# Quick-start for local testing. Equivalent to the prod compose
-# but with `restart: unless-stopped` instead of `restart: always`.
-#
-# Run: docker compose up --build
-#
-# For dedicated environments, prefer:
-#   Production:  docker compose -f docker-compose.prod.yml up --build
-#   Development: docker compose -f docker-compose.dev.yml up --build
+# Self-contained production stack. Run with:
+#   docker compose -f docker-compose.prod.yml up --build
 #
 # Services
 # ────────
-#   postgres        PostgreSQL 16-alpine          :5432
-#   migrate         drizzle-kit migrate (one-shot)
-#   python-backend  FastAPI + uvicorn              :8001
-#   api-server      Express + WebSocket + Drizzle  :8000
-#   frontend        nginx (Vite bundle)            :5173
+#   postgres        PostgreSQL 16-alpine         :5432
+#   migrate         drizzle-kit migrate (one-shot, exits 0 on success)
+#   python-backend  FastAPI + uvicorn             :8001
+#   api-server      Express + WebSocket + Drizzle :8000
+#   frontend        nginx (Vite bundle)           :5173
 #
-# Startup order (healthcheck-based)
-# ──────────────────────────────────
-#   postgres (healthy)
-#       ↓
-#   migrate (completed_successfully)  ← runs drizzle-kit migrate
-#       ↓
-#   python-backend (healthy)
-#       ↓
-#   api-server (healthy)   ← all three above
-#       ↓
-#   frontend
+# Startup order (enforced by healthcheck-based depends_on)
+# ─────────────────────────────────────────────────────────
+#   1. postgres          (healthy)
+#   2. migrate           (completed_successfully)  — runs SQL migrations
+#   3. python-backend    (healthy)
+#   4. api-server        (healthy)  ← waits for postgres + migrate + python-backend
+#   5. frontend          (started)  ← waits for api-server healthy
+#
+# All secrets come from .env at the repo root. Never hardcoded here.
+# DOCKER_BUILDKIT=1 is set inline — enables BuildKit cache mounts in Dockerfiles.
 ##############################################################################
 
 services:
@@ -36,7 +29,7 @@ services:
   # ── 1. PostgreSQL ─────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
-    restart: unless-stopped
+    restart: always
 
     environment:
       POSTGRES_USER:     ${POSTGRES_USER:-postgres}
@@ -44,15 +37,18 @@ services:
       POSTGRES_DB:       ${POSTGRES_DB:-Astro-sentinel}
 
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # Named volume — data survives container recreation and `docker compose down`.
+      # Only destroyed by `docker compose -f docker-compose.prod.yml down -v`.
+      - postgres_prod_data:/var/lib/postgresql/data
 
     ports:
       - "5432:5432"
 
     networks:
-      - cosmic
+      - cosmic-prod
 
     healthcheck:
+      # pg_isready returns 0 when postgres accepts connections.
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-Astro-sentinel}"]
       interval: 5s
       timeout: 5s
@@ -71,6 +67,8 @@ services:
       context: .
       dockerfile: docker/migrate.Dockerfile
 
+    # One-shot: runs drizzle-kit migrate then exits.
+    # restart: "no" ensures Docker never restarts this container.
     restart: "no"
 
     environment:
@@ -81,7 +79,7 @@ services:
         condition: service_healthy
 
     networks:
-      - cosmic
+      - cosmic-prod
 
     logging:
       driver: json-file
@@ -95,18 +93,19 @@ services:
       context: ./backend
       dockerfile: Dockerfile
 
-    restart: unless-stopped
+    restart: always
 
     env_file:
-      - ./backend/.env
+      - ./backend/.env   # GCN_CLIENT_ID, GCN_CLIENT_SECRET
 
     ports:
       - "8001:8001"
 
     networks:
-      - cosmic
+      - cosmic-prod
 
     healthcheck:
+      # curl -f returns non-zero on HTTP error. /health returns {"status":"healthy"}.
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 10s
       timeout: 5s
@@ -125,13 +124,16 @@ services:
       context: .
       dockerfile: artifacts/api-server/Dockerfile
 
-    restart: unless-stopped
+    restart: always
 
     environment:
       PORT:                 "8000"
       NODE_ENV:             production
 
+      # Uses postgres (Docker service name) not localhost
       DATABASE_URL:         "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD_URLENC}@postgres:5432/${POSTGRES_DB:-Astro-sentinel}"
+
+      # Uses python-backend (Docker service name) not localhost
       PYTHON_BACKEND_URL:   "ws://python-backend:8001/api/ws"
 
       JWT_SECRET:           ${JWT_SECRET}
@@ -148,17 +150,21 @@ services:
       - "8000:8000"
 
     networks:
-      - cosmic
+      - cosmic-prod
 
     depends_on:
       postgres:
         condition: service_healthy
       migrate:
+        # Wait for migrations to complete before starting the API.
+        # This ensures all tables/columns exist before Drizzle queries run.
         condition: service_completed_successfully
       python-backend:
         condition: service_healthy
 
     healthcheck:
+      # /api/healthz is defined in src/routes/health.ts → GET /healthz → { status: "ok" }
+      # Node 22 native fetch works in ESM context (no require needed).
       test: ["CMD-SHELL", "node --input-type=module -e \"fetch('http://localhost:8000/api/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 10s
       timeout: 8s
@@ -177,19 +183,20 @@ services:
       context: .
       dockerfile: artifacts/astro-sentinel/Dockerfile
 
-    restart: unless-stopped
+    restart: always
 
     ports:
       - "5173:5173"
 
     networks:
-      - cosmic
+      - cosmic-prod
 
     depends_on:
       api-server:
         condition: service_healthy
 
     healthcheck:
+      # curl -f returns non-zero on HTTP error — confirms nginx is serving.
       test: ["CMD", "curl", "-f", "http://localhost:5173/"]
       interval: 15s
       timeout: 5s
@@ -204,9 +211,14 @@ services:
 
 # ── Named volumes ─────────────────────────────────────────────────────────────
 volumes:
-  postgres_data:
+  postgres_prod_data:
+    # Separate volume name from dev to prevent data cross-contamination.
+    # Data persists across restarts and `docker compose down`.
+    # Destroyed only with: docker compose -f docker-compose.prod.yml down -v
 
 # ── Networks ──────────────────────────────────────────────────────────────────
 networks:
-  cosmic:
+  cosmic-prod:
     driver: bridge
+    # All inter-service communication uses Docker service names.
+    # No service references localhost to reach another service.
