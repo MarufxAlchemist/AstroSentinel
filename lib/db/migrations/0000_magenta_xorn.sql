@@ -206,7 +206,7 @@ CREATE TABLE "core"."events" (
 	"detection_time" timestamp with time zone NOT NULL,
 	"ra" double precision NOT NULL,
 	"dec" double precision NOT NULL,
-	"sky_position" "geography(POINT, 4326)",
+	"sky_position" geography(POINT, 4326),
 	"error_radius" double precision NOT NULL,
 	"snr" double precision NOT NULL,
 	"far" double precision NOT NULL,
