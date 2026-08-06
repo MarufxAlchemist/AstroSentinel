@@ -10,6 +10,7 @@ import {
   doublePrecision,
   jsonb,
   timestamp,
+  index,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { labs } from "./tenant.js";
@@ -17,6 +18,53 @@ import { users } from "./identity.js";
 import { events } from "./events.js";
 
 export const alertsSchema = pgSchema("alerts");
+
+// ─── alerts.notification_history ─────────────────────────────────────────────
+//
+// Append-only audit table. One row per deduplication decision (send or suppress).
+// The engine reads the most-recent sent row for an eventId to detect meaningful
+// state changes across GCN lifecycle revisions.
+//
+// Index: (event_id, sent_at DESC) — used by store.ts getLastNotification()
+
+export const notificationHistory = alertsSchema.table(
+  "notification_history",
+  {
+    id:             bigserial("id", { mode: "bigint" }).primaryKey(),
+    /** GCN string event ID (e.g. "S230518h") — not the internal bigserial PK */
+    eventId:        text("event_id").notNull(),
+    /** GCN lifecycle at decision time: preliminary | initial | update | confirmed */
+    lifecycle:      text("lifecycle").notNull(),
+    revisionCount:  integer("revision_count").notNull().default(0),
+    /** P0 / P1 / P2 / P3 from Phase 5.2 engine */
+    priorityLevel:  text("priority_level").notNull(),
+    /** 0–100 aggregate score */
+    priorityScore:  integer("priority_score").notNull().default(0),
+    /** HIGH / MEDIUM / LOW / NONE from Phase 5.4 correlation engine */
+    corrConfidence: text("corr_confidence").notNull().default("NONE"),
+    /** 1-sigma error radius in arcmin at time of decision */
+    errorRadius:    doublePrecision("error_radius").notNull().default(0),
+    /**
+     * Human-readable reasons why this send/suppress decision was made.
+     * e.g. ["First notification", "Priority increased P1→P0"]
+     * or   ["Suppressed: no meaningful change since last send"]
+     */
+    triggerReasons: text("trigger_reasons").array().notNull().default([]),
+    /**
+     * true  = this revision was suppressed (no email sent)
+     * false = email was sent
+     */
+    suppressed:     boolean("suppressed").notNull().default(false),
+    sentAt:         timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("notification_history_event_id_sent_at_idx").on(t.eventId, t.sentAt),
+  ],
+);
+
+export type NotificationHistoryRow    = typeof notificationHistory.$inferSelect;
+export type InsertNotificationHistory = typeof notificationHistory.$inferInsert;
+
 
 // ─── alerts.alert_subscriptions ─────────────────────────────────────────────
 
@@ -33,6 +81,14 @@ export const alertSubscriptions = alertsSchema.table("alert_subscriptions", {
   observatories:    text("observatories").array().notNull().default([]),
   channel:          text("channel").notNull(),
   channelConfig:    jsonb("channel_config").notNull().$type<Record<string, unknown>>().default({}),
+  priorityLevel:    text("priority_level").notNull().default("all"),
+  behaviour:        jsonb("behaviour").notNull().$type<Record<string, boolean>>().default({
+    aiSummary: true,
+    correlation: true,
+    localization: true,
+    digest: false,
+    instant: true,
+  }),
   throttleMinutes:  integer("throttle_minutes").notNull().default(0),
   isActive:         boolean("is_active").notNull().default(true),
   createdAt:        timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

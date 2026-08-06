@@ -61,6 +61,8 @@ export {
   eventAnnotationsRelations,
   eventEmbeddingsRelations,
   aiCorrelationAnalysisRelations,
+  aiScientificSummaries,
+  aiScientificSummariesRelations,
 } from "./events.js";
 export type {
   AstroEvent,
@@ -80,12 +82,17 @@ export type {
   AiCorrelationAnalysis,
   InsertAiCorrelationAnalysis,
 } from "./events.js";
+export type {
+  AiScientificSummary,
+  InsertAiScientificSummary,
+} from "./events.js";
 
 // ─── Alerts ───────────────────────────────────────────────────────────────────
 export {
   alertsSchema,
   alertSubscriptions,
   alerts,
+  notificationHistory,
   alertSubscriptionsRelations,
   alertsRelations,
 } from "./alerts.js";
@@ -94,6 +101,8 @@ export type {
   InsertAlertSubscription,
   Alert,
   InsertAlert,
+  NotificationHistoryRow,
+  InsertNotificationHistory,
 } from "./alerts.js";
 
 // ─── Metrics ──────────────────────────────────────────────────────────────────

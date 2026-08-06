@@ -275,6 +275,21 @@ export const aiCorrelationAnalysis = coreSchema.table("ai_correlation_analysis",
 export type AiCorrelationAnalysis = typeof aiCorrelationAnalysis.$inferSelect;
 export type InsertAiCorrelationAnalysis = typeof aiCorrelationAnalysis.$inferInsert;
 
+// ─── core.ai_scientific_summaries ────────────────────────────────────────────
+
+export const aiScientificSummaries = coreSchema.table("ai_scientific_summaries", {
+  id: bigserial("id", { mode: "bigint" }).primaryKey(),
+  eventId: bigserial("event_id", { mode: "bigint" }).notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  metadataHash: text("metadata_hash").notNull(),
+  modelName: text("model_name").notNull().default("gemini-2.5-flash"),
+  summaryJson: jsonb("summary_json").notNull().$type<Record<string, unknown>>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type AiScientificSummary = typeof aiScientificSummaries.$inferSelect;
+export type InsertAiScientificSummary = typeof aiScientificSummaries.$inferInsert;
+
 // ─── Relations ───────────────────────────────────────────────────────────────
 
 export const eventsRelations = relations(events, ({ one, many }) => ({
@@ -286,6 +301,7 @@ export const eventsRelations = relations(events, ({ one, many }) => ({
   followupRequests: many(eventFollowupRequests),
   annotations: many(eventAnnotations),
   embedding: many(eventEmbeddings),
+  aiSummaries: many(aiScientificSummaries),
 }));
 
 export const eventDetectionsRelations = relations(eventDetections, ({ one }) => ({
@@ -326,4 +342,8 @@ export const eventEmbeddingsRelations = relations(eventEmbeddings, ({ one }) => 
 
 export const aiCorrelationAnalysisRelations = relations(aiCorrelationAnalysis, ({ one }) => ({
   event: one(events, { fields: [aiCorrelationAnalysis.eventId], references: [events.id] }),
+}));
+
+export const aiScientificSummariesRelations = relations(aiScientificSummaries, ({ one }) => ({
+  event: one(events, { fields: [aiScientificSummaries.eventId], references: [events.id] }),
 }));

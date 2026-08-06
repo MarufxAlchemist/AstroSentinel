@@ -38,7 +38,7 @@ export function SciencePanel({ event }: Props) {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="tabs relative z-[999] flex shrink-0 border-b border-border bg-[hsl(var(--navbar-bg))] pointer-events-auto">
+      <div className="tabs relative z-10 flex shrink-0 border-b border-border bg-[hsl(var(--navbar-bg))] pointer-events-auto">
         {TABS.map((tab) => (
           <button
             key={tab.id}

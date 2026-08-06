@@ -1,0 +1,15 @@
+Starting a New chat in any AI agent (for Astrosentinel)
+
+Prompt:
+
+1. Read .agents/AGENTS.md to understand repository rules and workflow.
+
+2. Read docs/PROJECT_CONTEXT.md.
+
+3. Read docs/CURRENT_STATE.md.
+
+4. Read additional documentation from docs/ only if relevant to the task.
+
+5. Inspect only the source files directly related to the requested work.
+
+Do not scan the entire repository unless explicitly requested or the required information cannot be found in the documentation.

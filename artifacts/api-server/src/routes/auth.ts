@@ -352,9 +352,23 @@ router.post("/auth/login", async (req, res) => {
 });
 
 // GET /auth/me
-router.get("/auth/me", requireAuth, (req, res) => {
-  const user = (req as Request & { user: AuthPayload }).user;
-  res.json({ userId: user.userId, email: user.email, role: user.role });
+router.get("/auth/me", requireAuth, async (req, res) => {
+  const userPayload = (req as Request & { user: AuthPayload }).user;
+  const userId = userPayload.userId || (userPayload as any).id;
+  
+  if (!userId) {
+    res.status(401).json({ error: "Invalid token structure" });
+    return;
+  }
+
+  const [dbUser] = await db.select().from(usersTable).where(eq(usersTable.id, userId as any)).limit(1);
+  
+  if (!dbUser) {
+    res.status(401).json({ error: "User no longer exists" });
+    return;
+  }
+  
+  res.json({ userId: dbUser.id, email: dbUser.email, role: userPayload.role });
 });
 
 export default router;

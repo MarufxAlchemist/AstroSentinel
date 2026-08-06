@@ -3,6 +3,7 @@ import { Telescope, Search, Share2, Settings, Wifi, WifiOff, Sun, Moon, Bookmark
 import { useScienceMode } from "@/lib/ScienceModeContext";
 import { useTheme } from "@/lib/ThemeContext";
 import { NotificationBell } from "./NotificationBell";
+import { NotificationCenter } from "./notifications/NotificationCenter";
 import { ResearcherMenu } from "./ResearcherMenu";
 
 interface NavbarProps {
@@ -45,6 +46,8 @@ export function Navbar({
         </button>
         {/* Notification bell */}
         <NotificationBell />
+        {/* Notification Center */}
+        <NotificationCenter />
       </div>
       {/* Nav links */}
       <div className="flex items-center gap-1 text-xs font-medium mr-auto">

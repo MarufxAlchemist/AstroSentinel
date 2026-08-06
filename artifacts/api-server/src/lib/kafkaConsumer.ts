@@ -49,6 +49,7 @@ import { applyAlertFilter } from "./alertFilter";
 import type { Lifecycle } from "./alertFilter";
 import { recordReceived, recordAccepted, recordRejected } from "./filterReport";
 import { logger } from "./logger";
+import { dispatchForEvent } from "../notifications/notificationService";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -298,6 +299,13 @@ async function _handleAlert(envelope: Record<string, unknown>): Promise<void> {
     } else {
       broadcastEvent(broadcastPayload);
     }
+
+    // ── Notification pipeline (fire-and-forget, isolated from ingestion) ────
+    // Delegates entirely to the notifications/ module. kafkaConsumer has zero
+    // notification logic. Errors in the notification layer never affect ingestion.
+    void dispatchForEvent(broadcastPayload, isRevision).catch((err) =>
+      logger.error({ err }, "[notifications] dispatchForEvent threw unexpectedly"),
+    );
 
     // ── Persist localization metadata (GW events only) ─────────────────────
     // Only runs when the Python normalizer emitted a fitsUrl.

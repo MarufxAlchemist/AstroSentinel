@@ -7,6 +7,7 @@ import notesRouter from "./notes";
 import discussionsRouter from "./discussions";
 import bookmarksRouter from "./bookmarks";
 import filterReportRouter from "./filterReport";
+import notificationsRouter from "./notifications";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(notesRouter);
 router.use(discussionsRouter);
 router.use(bookmarksRouter);
 router.use(filterReportRouter);
+router.use(notificationsRouter);
 
 export default router;
