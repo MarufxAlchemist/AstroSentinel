@@ -1,17 +1,15 @@
 # syntax=docker/dockerfile:1
 ##############################################################################
-# artifacts/api-server/Dockerfile
-# Node 22-slim — Express + WebSocket + Drizzle ORM API server
+# Dockerfile.api — Express + WebSocket + Drizzle ORM API server
 #
-# BUILD CONTEXT: repo root (required for pnpm workspace resolution)
+# BUILD CONTEXT: repo root  (required for pnpm workspace resolution)
 #
-# Multi-stage build (v2):
-#   builder → pnpm install + esbuild bundle (target usable for dev too)
+# Multi-stage build:
+#   builder → pnpm install + esbuild bundle
 #   runner  → minimal runtime image (dist + native node_modules only)
 #
 # Optimizations:
 #   • BuildKit pnpm store cache — dramatically faster re-installs
-#   • PNPM_HOME set for consistent store location
 #   • runner has no corepack/pnpm — just node + the bundle
 #   • Layer ordering: manifests → install → source → build
 ##############################################################################

@@ -1,14 +1,14 @@
 # syntax=docker/dockerfile:1
 ##############################################################################
-# backend/Dockerfile
-# Python 3.12-slim — FastAPI + uvicorn + GCN Kafka consumer
+# Dockerfile.python — FastAPI + uvicorn + GCN Kafka consumer
 #
-# Build context: ./backend
+# BUILD CONTEXT: repo root  (unified context, same as all other Dockerfiles)
 #
-# Optimizations (v2):
+# Optimizations:
 #   • BuildKit pip cache mount — packages cached between builds
 #   • curl added for Docker healthcheck
 #   • Build tools removed in same RUN layer to avoid extra image layers
+#   • Source copied from backend/ subdirectory of the root context
 ##############################################################################
 
 FROM python:3.12-slim
@@ -30,18 +30,19 @@ WORKDIR /app
 # Copy requirements.txt before source so Docker can cache this layer.
 # BuildKit --mount=type=cache preserves the pip download cache between builds
 # — subsequent builds skip re-downloading packages that haven't changed.
-COPY requirements.txt .
+COPY backend/requirements.txt .
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
 # ── Application source ────────────────────────────────────────────────────────
-COPY . .
+# Copy only the app/ directory — not venv/, test files, or data files.
+COPY backend/app ./app
 
 # ── Port ─────────────────────────────────────────────────────────────────────
 EXPOSE 8001
 
 # ── Runtime ──────────────────────────────────────────────────────────────────
 # Production: no --reload flag (reload is for development only).
-# GCN_CLIENT_ID and GCN_CLIENT_SECRET are injected by docker-compose env_file.
+# GCN_CLIENT_ID and GCN_CLIENT_SECRET are injected by docker-compose environment.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]

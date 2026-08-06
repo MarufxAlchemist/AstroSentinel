@@ -1,39 +1,50 @@
 ##############################################################################
-# docker-compose.yml — Cosmic Alert System (DEFAULT / LOCAL)
+# docker-compose.yml — AstroSentinel / Cosmic Alert System
 #
-# Quick-start for local testing. Equivalent to the prod compose
-# but with `restart: unless-stopped` instead of `restart: always`.
+# THE single entry point for the entire stack.
 #
-# Run: docker compose up --build
+#   docker compose up --build        # foreground (logs visible)
+#   docker compose up -d --build     # detached (background)
+#   docker compose down              # stop (data preserved)
+#   docker compose down -v           # stop + wipe all volumes
 #
-# For dedicated environments, prefer:
-#   Production:  docker compose -f docker-compose.prod.yml up --build
-#   Development: docker compose -f docker-compose.dev.yml up --build
-#
-# Services
-# ────────
-#   postgres        PostgreSQL 16-alpine          :5432
-#   migrate         drizzle-kit migrate (one-shot)
-#   python-backend  FastAPI + uvicorn              :8001
-#   api-server      Express + WebSocket + Drizzle  :8000
-#   frontend        nginx (Vite bundle)            :5173
-#
-# Startup order (healthcheck-based)
-# ──────────────────────────────────
+# Services and startup order (healthcheck-based)
+# ──────────────────────────────────────────────
 #   postgres (healthy)
 #       ↓
-#   migrate (completed_successfully)  ← runs drizzle-kit migrate
+#   migrate (completed_successfully)   ← runs Drizzle migrations once
 #       ↓
-#   python-backend (healthy)
+#   python-backend (healthy)           ← GCN Kafka consumer + FastAPI WebSocket
 #       ↓
-#   api-server (healthy)   ← all three above
+#   api-server (healthy)               ← Express REST API + WebSocket bridge
 #       ↓
-#   frontend
+#   frontend                           ← nginx serving Vite SPA + /api proxy
+#
+# Public ports
+# ────────────
+#   5173  → Frontend (nginx SPA)
+#   8000  → API server (direct access / debugging)
+#   8001  → Python backend (direct access / debugging)
+#   5432  → PostgreSQL (direct access / debugging)
+#
+# Secrets
+# ───────
+#   All variables come from the root .env file.
+#   No secrets are hardcoded. No secrets are baked into images.
+#
+#   Required in .env:
+#     POSTGRES_PASSWORD, POSTGRES_PASSWORD_URLENC
+#     JWT_SECRET, GOOGLE_CLIENT_ID
+#     GEMINI_API_KEY
+#     ORCID_CLIENT_ID, ORCID_CLIENT_SECRET
+#     GCN_CLIENT_ID, GCN_CLIENT_SECRET
+#
+#   See .env.example for all variables and descriptions.
 ##############################################################################
 
 services:
 
-  # ── 1. PostgreSQL ─────────────────────────────────────────────────────────
+  # ── 1. PostgreSQL (PostGIS) ───────────────────────────────────────────────
   postgres:
     image: postgis/postgis:16-3.4-alpine
     restart: unless-stopped
@@ -65,11 +76,11 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # ── 2. Database migrations (one-shot) ─────────────────────────────────────
+  # ── 2. Database migrations (one-shot, exits 0 on success) ─────────────────
   migrate:
     build:
       context: .
-      dockerfile: docker/migrate.Dockerfile
+      dockerfile: Dockerfile.migrate
 
     restart: "no"
 
@@ -92,13 +103,14 @@ services:
   # ── 3. Python backend (GCN Kafka consumer + FastAPI WebSocket) ─────────────
   python-backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: Dockerfile.python
 
     restart: unless-stopped
 
-    env_file:
-      - ./backend/.env
+    environment:
+      GCN_CLIENT_ID:     ${GCN_CLIENT_ID}
+      GCN_CLIENT_SECRET: ${GCN_CLIENT_SECRET}
 
     ports:
       - "8001:8001"
@@ -119,11 +131,11 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # ── 4. API server (Express + Drizzle ORM + WebSocket) ─────────────────────
+  # ── 4. API server (Express + Drizzle ORM + WebSocket bridge) ──────────────
   api-server:
     build:
       context: .
-      dockerfile: artifacts/api-server/Dockerfile
+      dockerfile: Dockerfile.api
 
     restart: unless-stopped
 
@@ -175,7 +187,7 @@ services:
   frontend:
     build:
       context: .
-      dockerfile: artifacts/astro-sentinel/Dockerfile
+      dockerfile: Dockerfile.frontend
 
     restart: unless-stopped
 
@@ -202,11 +214,67 @@ services:
         max-size: "5m"
         max-file: "3"
 
+  # ── 6. Database backup (manual trigger only) ───────────────────────────────
+  # Run on demand:
+  #   docker compose --profile backup run --rm backup
+  #
+  # Or schedule via host cron:
+  #   0 2 * * * cd /path/to/repo && docker compose --profile backup run --rm backup
+  backup:
+    image: postgres:16-alpine
+    profiles:
+      - backup
+    restart: "no"
+
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+
+    volumes:
+      - postgres_backups:/backups
+
+    networks:
+      - cosmic
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    # Creates a timestamped gzipped backup, then prunes backups older than 7 days.
+    command: >
+      sh -c '
+        DATE=$$(date +%Y%m%d_%H%M%S) &&
+        FILE="/backups/backup_$$DATE.sql.gz" &&
+        echo "[backup] Starting pg_dump → $$FILE" &&
+        pg_dump -h postgres -U ${POSTGRES_USER:-postgres} ${POSTGRES_DB:-Astro-sentinel} | gzip > $$FILE &&
+        echo "[backup] Backup complete: $$(du -sh $$FILE | cut -f1)" &&
+        find /backups -name "backup_*.sql.gz" -mtime +7 -delete &&
+        echo "[backup] Old backups pruned (kept last 7 days)"
+      '
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "2m"
+        max-file: "2"
+
 # ── Named volumes ─────────────────────────────────────────────────────────────
 volumes:
   postgres_data:
+    # PostgreSQL data — survives container recreation.
+    # To wipe: docker compose down -v
+
+  postgres_backups:
+    # pg_dump backup files — populated by the backup service (profile=backup).
+    # To bind-mount to a host path for off-server storage, add:
+    #   driver_opts:
+    #     type: none
+    #     o: bind
+    #     device: /opt/astrosentinel-backups
 
 # ── Networks ──────────────────────────────────────────────────────────────────
 networks:
   cosmic:
     driver: bridge
+    # All services communicate via Docker service names.
+    # No service uses localhost to reach another service.
+    # Example: api-server connects to postgres:5432, not localhost:5432.

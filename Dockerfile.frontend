@@ -1,11 +1,10 @@
 # syntax=docker/dockerfile:1
 ##############################################################################
-# artifacts/astro-sentinel/Dockerfile
-# Node 22-slim (Vite build) → nginx:alpine (serve)
+# Dockerfile.frontend — Vite (React) build → nginx:alpine serve
 #
-# BUILD CONTEXT: repo root (required for pnpm workspace resolution)
+# BUILD CONTEXT: repo root  (required for pnpm workspace resolution)
 #
-# Multi-stage (v2):
+# Multi-stage:
 #   builder → pnpm install + vite build → static bundle in dist/public/
 #   runner  → nginx:alpine + curl (healthcheck) + static files
 #

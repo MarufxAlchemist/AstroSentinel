@@ -1,4 +1,4 @@
-# ── Git ─────────────────────────────────────────────────────────────────────
+# ── Git ──────────────────────────────────────────────────────────────────────
 .git
 .gitignore
 .github
@@ -13,15 +13,34 @@ dist
 out-tsc
 *.tsbuildinfo
 
-# ── Python ────────────────────────────────────────────────────────────────────
+# ── Python virtualenvs ────────────────────────────────────────────────────────
 backend/venv
+backend/.venv
+backend/env
+
+# ── Python bytecode ───────────────────────────────────────────────────────────
 **/__pycache__
 **/*.pyc
 **/*.pyo
+*$py.class
 
-# ── IDE / OS ──────────────────────────────────────────────────────────────────
+# ── Python packaging artifacts ─────────────────────────────────────────────────
+*.egg-info/
+*.egg
+backend/build
+
+# ── Test files (not needed in production containers) ─────────────────────────
+backend/test_*.py
+backend/*_test.py
+backend/test_consumer.py
+backend/test_ws.py
+
+# ── IDE / Editor ──────────────────────────────────────────────────────────────
 .vscode
 .idea
+*.swp
+
+# ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 
@@ -34,6 +53,7 @@ Thumbs.db
 gcn_archive.json.tar.gz
 historical_events.json
 historical_events_2026.json
+backend/historical_events_2026.json
 regenerate_historical_events.py
 ingest_gcn_archive.py
 generate_events.py
@@ -42,3 +62,4 @@ docs
 
 # ── Secrets (never bake into images) ─────────────────────────────────────────
 .env
+**/.env

@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
 ##############################################################################
-# docker/migrate.Dockerfile
-# One-shot container: applies pending Drizzle SQL migrations then exits.
+# Dockerfile.migrate — One-shot container: applies Drizzle migrations then exits
 #
 # BUILD CONTEXT: repo root
+#
 # Strategy: drizzle-kit migrate reads migrations/_journal.json to determine
 #   which SQL files from migrations/ have NOT yet been applied and runs them
 #   in order. It is fully idempotent — already-applied migrations are skipped.
@@ -31,13 +31,13 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY tsconfig.base.json ./
 
 # Only the packages needed for migration
-COPY lib/db/package.json        ./lib/db/package.json
-COPY lib/api-zod/package.json   ./lib/api-zod/package.json
-COPY lib/api-spec/package.json  ./lib/api-spec/package.json
-COPY lib/api-client-react/package.json    ./lib/api-client-react/package.json
-COPY artifacts/api-server/package.json   ./artifacts/api-server/package.json
-COPY artifacts/astro-sentinel/package.json ./artifacts/astro-sentinel/package.json
-COPY scripts/package.json                ./scripts/package.json
+COPY lib/db/package.json                    ./lib/db/package.json
+COPY lib/api-zod/package.json               ./lib/api-zod/package.json
+COPY lib/api-spec/package.json              ./lib/api-spec/package.json
+COPY lib/api-client-react/package.json      ./lib/api-client-react/package.json
+COPY artifacts/api-server/package.json      ./artifacts/api-server/package.json
+COPY artifacts/astro-sentinel/package.json  ./artifacts/astro-sentinel/package.json
+COPY scripts/package.json                   ./scripts/package.json
 
 # ── Install dependencies with BuildKit pnpm cache ─────────────────────────────
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
@@ -65,16 +65,16 @@ async function run() {
     console.error("Missing DATABASE_URL");
     process.exit(1);
   }
-  
+
   console.log("Connecting to database...");
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-  
+
   console.log("Ensuring required PostgreSQL extensions exist...");
   await pool.query('CREATE EXTENSION IF NOT EXISTS ltree;');
   await pool.query('CREATE EXTENSION IF NOT EXISTS postgis;');
-  
+
   const db = drizzle(pool);
-  
+
   console.log("Running migrations...");
   try {
     await migrate(db, { migrationsFolder: './migrations' });
