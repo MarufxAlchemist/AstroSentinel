@@ -1,14 +1,18 @@
 /**
- * types.ts — Multi-Messenger Correlation Engine (Phase 5.4)
+ * types.ts — Multi-Messenger Correlation Engine (Phase 6.0A)
  * ----------------------------------------------------------
  * All type definitions. No logic, no I/O.
  *
- * Schema matches docs/correlation.txt:
+ * Phase 6.0A upgrades
+ * ───────────────────
+ *  • CorrelationType enum — distinguishes multi_messenger / cross_detection / speculative
+ *  • correlationType added to CorrelationMatch
+ *  • nCandidates added to CorrelationResult
+ *  • StoredCorrelation — shape returned from repository / API endpoints
  *
+ * Input/output schema matches docs/correlation.txt:
  *   Input:  { primary_event, candidate_events, correlation_scores }
  *   Output: { confidence, scientific_assessment, followup_recommendation, reasoning }
- *
- * Phase 5.4 — AstroSentinel
  */
 
 // ---------------------------------------------------------------------------
@@ -26,6 +30,22 @@
 export type CorrelationConfidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
 
 // ---------------------------------------------------------------------------
+// Correlation type
+// ---------------------------------------------------------------------------
+
+/**
+ * Physical nature of a correlated pair.
+ *
+ *   multi_messenger  — different messengers (photons, GW, neutrinos, radio) from the same source.
+ *                      This is AstroSentinel's primary scientific target (e.g. GW+GRB, EP+GW).
+ *   cross_detection  — same event type, same sky position, close in time.
+ *                      Almost certainly the same source detected by two instruments.
+ *                      Scientifically valuable for cross-calibration, not a new multi-messenger event.
+ *   speculative      — no established physical emission model; included at low weight.
+ */
+export type CorrelationType = "multi_messenger" | "cross_detection" | "speculative";
+
+// ---------------------------------------------------------------------------
 // Event representations
 // ---------------------------------------------------------------------------
 
@@ -35,7 +55,7 @@ export type CorrelationConfidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
  */
 export interface CorrelationEvent {
   eventId:     string;
-  eventType:   string;   // "GW" | "GRB" | "FRB" | "NU"
+  eventType:   string;   // "GW" | "GRB" | "FRB" | "NU" | "EP"
   observatory: string;
   /** ISO-8601 detection timestamp */
   detectionTime: string;
@@ -58,23 +78,29 @@ export interface CorrelationEvent {
  */
 export interface CorrelationMatch {
   /** The candidate event that was evaluated */
-  candidate:          CorrelationEvent;
+  candidate:              CorrelationEvent;
   /** Time difference [seconds] — signed: positive = candidate is later */
-  deltaTimeSec:       number;
+  deltaTimeSec:           number;
   /** Angular separation [degrees] */
-  angularSeparationDeg: number;
-  /** Combined error radius of both events [degrees] */
-  combinedErrorDeg:   number;
-  /** Whether temporal coincidence is within window */
-  temporalMatch:      boolean;
-  /** Whether spatial coincidence is within 3-sigma (configurable) factor */
-  spatialMatch:       boolean;
-  /** Event type pairing score contribution */
-  pairingScore:       number;
+  angularSeparationDeg:   number;
+  /** Combined error radius of both events [degrees] — quadrature sum */
+  combinedErrorDeg:       number;
+  /** Gaussian temporal score component [0–1] */
+  temporalScore:          number;
+  /** Gaussian spatial score component [0–1] */
+  spatialScore:           number;
+  /** Whether temporal coincidence is within the configured window */
+  temporalMatch:          boolean;
+  /** Whether spatial coincidence is within the configured error factor */
+  spatialMatch:           boolean;
+  /** Event type pairing weight [0–1] */
+  pairingWeight:          number;
+  /** Physical nature of this pair */
+  correlationType:        CorrelationType;
   /** Total score for this pair [0–100] */
-  score:              number;
+  score:                  number;
   /** Human-readable reasoning for this specific pair */
-  reasoning:          string;
+  reasoning:              string;
 }
 
 // ---------------------------------------------------------------------------
@@ -83,11 +109,14 @@ export interface CorrelationMatch {
 
 /**
  * Complete output of the correlation engine for one primary event.
- * This is the exact shape expected by the email template placeholder.
+ * This is the exact shape expected by the email template and API endpoints.
  */
 export interface CorrelationResult {
   /** Overall confidence in any correlation finding */
   confidence: CorrelationConfidence;
+
+  /** Number of candidate events that were evaluated */
+  nCandidates: number;
 
   /**
    * Scientific narrative.
@@ -132,4 +161,30 @@ export interface CorrelationInput {
   candidate_events:   CorrelationEvent[];
   /** Optional pre-computed scores to blend in (for future AI integration) */
   correlation_scores?: Record<string, number>;
+}
+
+// ---------------------------------------------------------------------------
+// Stored correlation — shape for DB persistence and API responses
+// ---------------------------------------------------------------------------
+
+/**
+ * Flattened record for the core.event_correlations table.
+ * Written by repository.ts, read by API endpoints.
+ */
+export interface StoredCorrelation {
+  /** Internal DB id of the primary event (core.events.id) */
+  primaryEventDbId:   bigint;
+  /** Internal DB id of the candidate event */
+  candidateEventDbId: bigint;
+  /** GCN string event ID of the primary */
+  primaryEventId:     string;
+  /** GCN string event ID of the candidate */
+  candidateEventId:   string;
+  confidence:         CorrelationConfidence;
+  score:              number;
+  deltaTimeSec:       number;
+  angularSepDeg:      number;
+  correlationType:    CorrelationType;
+  reasoning:          string;
+  computedAt:         Date;
 }

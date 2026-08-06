@@ -1,19 +1,29 @@
 /**
- * scorer.ts — Multi-Messenger Correlation Engine (Phase 5.4)
+ * scorer.ts — Multi-Messenger Correlation Engine (Phase 6.0A)
  * -----------------------------------------------------------
  * Scores a single (primary, candidate) event pair.
  *
- * Scoring model
- * ─────────────
- *   Temporal score   [0–35] — how tightly the events are coincident in time
- *   Spatial score    [0–25] — whether sky positions overlap within error regions
- *   Pairing score    [0–40] — how physically motivated the event type combination is
- *   ──────────────────────
- *   Total            [0–100]
+ * Scoring model (upgraded to Gaussian geometric mean in Phase 6.0A)
+ * ─────────────────────────────────────────────────────────────────
+ *   temporal_score  = exp(−ΔT²  / (2 σT²))          Gaussian in time    [0–1]
+ *   spatial_score   = exp(−θ²   / (2 σθ²))           Gaussian in angle   [0–1]
+ *   σθ              = √(err₁² + err₂²)  (quadrature, degrees)
+ *
+ *   combined_score  = weight × √(temporal × spatial)  ← geometric mean × weight
+ *   final_score     = round(combined_score × 100)      [0–100]
+ *
+ * WHY GEOMETRIC MEAN over arithmetic mean?
+ * ────────────────────────────────────────
+ *   Arithmetic mean allows a perfect temporal score to compensate a zero
+ *   spatial score:
+ *     mean(1.0, 0.0) = 0.50 → 50% for a GRB from the opposite sky direction.
+ *
+ *   Geometric mean is zero whenever either factor is zero:
+ *     √(1.0 × 0.0) = 0.00 → correctly eliminates that false positive.
  *
  * Pure function — no I/O, no side effects.
  *
- * Phase 5.4 — AstroSentinel
+ * Phase 6.0A — AstroSentinel
  */
 
 import type { CorrelationEvent, CorrelationMatch } from "./types.js";
@@ -61,47 +71,49 @@ function getTemporalWindowSec(
   if ((a === "GW"  && b === "FRB") || (a === "FRB" && b === "GW"))  return windows.gwFrbSec;
   if ((a === "GRB" && b === "NU")  || (a === "NU"  && b === "GRB")) return windows.grbNuSec;
   if ((a === "GRB" && b === "FRB") || (a === "FRB" && b === "GRB")) return windows.grbFrbSec;
+  if ((a === "EP"  && b === "GW")  || (a === "GW"  && b === "EP"))  return windows.epGwSec;
+  if ((a === "EP"  && b === "GRB") || (a === "GRB" && b === "EP"))  return windows.epGrbSec;
+  if ((a === "EP"  && b === "NU")  || (a === "NU"  && b === "EP"))  return windows.epNuSec;
+  if ((a === "NU"  && b === "FRB") || (a === "FRB" && b === "NU"))  return windows.nuFrbSec;
   return windows.defaultSec;
 }
 
 // ---------------------------------------------------------------------------
-// Temporal score
+// Gaussian score components
 // ---------------------------------------------------------------------------
 
 /**
- * Score the temporal coincidence of a pair.
- *
- * Returns 35 for ΔT at the window centre, scaling linearly to 0 at the edge.
- * Returns 0 if outside the window entirely.
+ * Gaussian temporal score.
+ * Returns exp(−ΔT² / 2σ²) — peaks at 1.0 for ΔT=0, falls to near-zero at |ΔT| >> σ.
+ * Also returns whether ΔT is within the strict half-window (for `temporalMatch` flag).
  */
-function temporalScore(deltaTimeSec: number, windowSec: number): number {
+function gaussianTemporalScore(
+  deltaTimeSec: number,
+  windowSec: number,
+): { score: number; match: boolean } {
   const absdt = Math.abs(deltaTimeSec);
-  if (absdt > windowSec) return 0;
-  // Linear falloff: full score at centre, 0 at edge
-  return Math.round(35 * (1 - absdt / windowSec));
+  // Use windowSec as 2-sigma boundary so the score is exp(-2) ≈ 0.135 at the window edge
+  const sigma = windowSec / 2;
+  const score = Math.exp(-(absdt * absdt) / (2 * sigma * sigma));
+  return { score, match: absdt <= windowSec };
 }
 
-// ---------------------------------------------------------------------------
-// Spatial score
-// ---------------------------------------------------------------------------
-
 /**
- * Score the spatial coincidence of a pair.
- *
- * Combined error radius = errorRadius_A + errorRadius_B (in arcmin → degrees).
- * Match threshold = spatialFactor × combinedError.
- *
- * Returns 25 when separation = 0, scaling to 0 at the threshold boundary.
+ * Gaussian spatial score.
+ * σθ = √(err₁² + err₂²)  (quadrature sum of error radii in degrees)
+ * Returns exp(−θ² / 2σθ²) — peaks at 1.0 for θ=0.
+ * `match` = true when separation ≤ spatialFactor × σθ.
  */
-function spatialScore(
-  separation: number,
+function gaussianSpatialScore(
+  separationDeg: number,
   combinedErrorDeg: number,
-  factor: number,
+  spatialFactor: number,
 ): { score: number; match: boolean } {
-  const threshold = factor * combinedErrorDeg;
-  if (threshold <= 0 || separation > threshold) return { score: 0, match: false };
-  const score = Math.round(25 * (1 - separation / threshold));
-  return { score, match: true };
+  // Floor combined error at 0.1° to prevent division-by-zero on perfectly localised events.
+  const sigma = Math.max(combinedErrorDeg, 0.1);
+  const score = Math.exp(-(separationDeg * separationDeg) / (2 * sigma * sigma));
+  const threshold = spatialFactor * sigma;
+  return { score, match: separationDeg <= threshold };
 }
 
 // ---------------------------------------------------------------------------
@@ -127,9 +139,12 @@ export function scorePair(
       deltaTimeSec:           0,
       angularSeparationDeg:   0,
       combinedErrorDeg:       0,
+      temporalScore:          0,
+      spatialScore:           0,
       temporalMatch:          false,
       spatialMatch:           false,
-      pairingScore:           0,
+      pairingWeight:          0,
+      correlationType:        "speculative",
       score:                  0,
       reasoning:              "Candidate is a retraction — excluded from correlation.",
     };
@@ -140,42 +155,39 @@ export function scorePair(
   const tCandidate = new Date(candidate.detectionTime).getTime();
   const deltaTimeSec = (tCandidate - tPrimary) / 1000;
 
-  const windowSec    = getTemporalWindowSec(primary.eventType, candidate.eventType, windows);
-  const tScore       = temporalScore(deltaTimeSec, windowSec);
-  const temporalMatch = Math.abs(deltaTimeSec) <= windowSec;
+  const windowSec = getTemporalWindowSec(primary.eventType, candidate.eventType, windows);
+  const { score: tScore, match: temporalMatch } = gaussianTemporalScore(deltaTimeSec, windowSec);
 
   // ── Spatial ───────────────────────────────────────────────────────────────
-  const separation     = angularSeparationDeg(primary.ra, primary.dec, candidate.ra, candidate.dec);
-  // Convert arcmin → degrees; sum both error regions
-  const combinedErrorDeg = (primary.errorRadius + candidate.errorRadius) / 60;
-  const { score: sScore, match: spatialMatch } = spatialScore(
+  const separation = angularSeparationDeg(primary.ra, primary.dec, candidate.ra, candidate.dec);
+
+  // Convert arcmin → degrees; quadrature sum of both error regions
+  const err1 = Math.max((primary.errorRadius   || 0) / 60, 0.1);
+  const err2 = Math.max((candidate.errorRadius || 0) / 60, 0.1);
+  const combinedErrorDeg = Math.sqrt(err1 * err1 + err2 * err2);
+
+  const { score: sScore, match: spatialMatch } = gaussianSpatialScore(
     separation,
     combinedErrorDeg,
     windows.spatialFactor,
   );
 
-  // ── Event type pairing ────────────────────────────────────────────────────
-  const rule        = getPairingRule(primary.eventType, candidate.eventType);
-  const pairingScore = rule?.score ?? 0;
+  // ── Pairing rule ──────────────────────────────────────────────────────────
+  const rule = getPairingRule(primary.eventType, candidate.eventType);
 
-  // ── Aggregate ─────────────────────────────────────────────────────────────
-  const score = Math.min(100, tScore + sScore + pairingScore);
+  // ── Aggregate — geometric mean × weight ───────────────────────────────────
+  const geometricMean = Math.sqrt(tScore * sScore);
+  const score = Math.min(100, Math.round(rule.weight * geometricMean * 100));
 
   // ── Reasoning ─────────────────────────────────────────────────────────────
   const parts: string[] = [];
-
-  parts.push(`ΔT = ${deltaTimeSec >= 0 ? "+" : ""}${deltaTimeSec.toFixed(1)} s (window: ±${windowSec} s)`);
+  const dtSign = deltaTimeSec >= 0 ? "+" : "";
+  parts.push(`ΔT = ${dtSign}${deltaTimeSec.toFixed(1)} s (window: ±${windowSec} s)`);
   parts.push(
     `angular separation = ${separation.toFixed(2)}° ` +
     `(${windows.spatialFactor}σ threshold: ${(windows.spatialFactor * combinedErrorDeg).toFixed(2)}°)`,
   );
-
-  if (rule) {
-    parts.push(rule.physicalBasis);
-  } else {
-    parts.push(`No established physical model for ${primary.eventType}+${candidate.eventType} pairing.`);
-  }
-
+  parts.push(rule.physicalBasis);
   if (!temporalMatch) parts.push("Outside temporal coincidence window.");
   if (!spatialMatch)  parts.push("Outside spatial coincidence region.");
 
@@ -184,9 +196,12 @@ export function scorePair(
     deltaTimeSec,
     angularSeparationDeg:  separation,
     combinedErrorDeg,
+    temporalScore:         tScore,
+    spatialScore:          sScore,
     temporalMatch,
     spatialMatch,
-    pairingScore,
+    pairingWeight:         rule.weight,
+    correlationType:       rule.correlationType,
     score,
     reasoning: parts.join(" "),
   };

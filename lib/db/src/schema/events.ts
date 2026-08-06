@@ -11,6 +11,7 @@ import {
   jsonb,
   timestamp,
   customType,
+  index,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { labs } from "./tenant.js";
@@ -290,6 +291,51 @@ export const aiScientificSummaries = coreSchema.table("ai_scientific_summaries",
 export type AiScientificSummary = typeof aiScientificSummaries.$inferSelect;
 export type InsertAiScientificSummary = typeof aiScientificSummaries.$inferInsert;
 
+// ─── core.event_correlations ─────────────────────────────────────────────────
+//
+// Persisted output of the Multi-Messenger Correlation Engine (Phase 6.0A).
+// One row per (primary_event, candidate_event) pair with confidence ≠ NONE.
+// Written by science/correlationEngine/repository.ts.
+// Read by GET /events/:id/correlations and GET /correlations/recent.
+//
+// Index: (primary_event_id)            — for per-event lookups
+// Index: (confidence, computed_at DESC) — for dashboard high-confidence feed
+// Unique: (primary_event_id, candidate_event_id) — prevents duplicates; safe upsert
+
+export const eventCorrelations = coreSchema.table(
+  "event_correlations",
+  {
+    id: bigserial("id", { mode: "bigint" }).primaryKey(),
+    /** Internal DB id of the primary (triggering) event */
+    primaryEventId:   bigserial("primary_event_id", { mode: "bigint" }).notNull()
+                        .references(() => events.id, { onDelete: "cascade" }),
+    /** Internal DB id of the correlated candidate event */
+    candidateEventId: bigserial("candidate_event_id", { mode: "bigint" }).notNull()
+                        .references(() => events.id, { onDelete: "cascade" }),
+    /** Confidence tier: HIGH | MEDIUM | LOW */
+    confidence:      text("confidence").notNull().default("NONE"),
+    /** Aggregate score [0–100] */
+    score:           integer("score").notNull().default(0),
+    /** Signed time difference [seconds]: positive = candidate is later */
+    deltaTimeSec:    doublePrecision("delta_t_sec").notNull().default(0),
+    /** Angular separation between the two sky positions [degrees] */
+    angularSepDeg:   doublePrecision("angular_sep_deg").notNull().default(0),
+    /** Physical nature of the pairing: multi_messenger | cross_detection | speculative */
+    correlationType: text("correlation_type").notNull().default("speculative"),
+    /** Human-readable reasoning string from the engine */
+    reasoning:       text("reasoning"),
+    /** When this result was computed (or last updated) */
+    computedAt:      timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("event_correlations_primary_idx").on(t.primaryEventId),
+    index("event_correlations_confidence_idx").on(t.confidence, t.computedAt),
+  ],
+);
+
+export type EventCorrelation = typeof eventCorrelations.$inferSelect;
+export type InsertEventCorrelation = typeof eventCorrelations.$inferInsert;
+
 // ─── Relations ───────────────────────────────────────────────────────────────
 
 export const eventsRelations = relations(events, ({ one, many }) => ({
@@ -302,6 +348,8 @@ export const eventsRelations = relations(events, ({ one, many }) => ({
   annotations: many(eventAnnotations),
   embedding: many(eventEmbeddings),
   aiSummaries: many(aiScientificSummaries),
+  correlationsAsPrimary: many(eventCorrelations, { relationName: "primary" }),
+  correlationsAsCandidate: many(eventCorrelations, { relationName: "candidate" }),
 }));
 
 export const eventDetectionsRelations = relations(eventDetections, ({ one }) => ({

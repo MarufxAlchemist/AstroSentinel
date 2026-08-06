@@ -1,12 +1,15 @@
 /**
- * windows.ts — Multi-Messenger Correlation Engine (Phase 5.4)
+ * windows.ts — Multi-Messenger Correlation Engine (Phase 6.0A)
  * ------------------------------------------------------------
  * Configurable coincidence windows for temporal and spatial matching.
  *
  * All values are read from environment variables.
  * No magic numbers — every threshold has a scientific justification comment.
  *
- * Phase 5.4 — AstroSentinel
+ * Phase 6.0A additions
+ * ─────────────────────
+ *  • Einstein Probe (EP) pairing windows
+ *  • dbLookbackMinutes default increased to 1440 (24 h) to support EP delayed emission
  */
 
 // ---------------------------------------------------------------------------
@@ -19,19 +22,20 @@ export interface CoincidenceWindows {
   /**
    * GW → GRB: ±5 s
    * Gravitational wave merger → prompt gamma-ray emission.
-   * GW170817/GRB 170817A had ΔT = +1.74 s.
+   * GW170817/GRB 170817A had ΔT = +1.74 s (compact binary merger).
    */
   gwGrbSec: number;
 
   /**
    * GW → NU: ±500 s
    * Extended window to capture neutrino precursor and extended emission.
+   * SN 1987A neutrinos arrived ~3h before optical peak.
    */
   gwNuSec: number;
 
   /**
    * GW → FRB: ±1 s
-   * Proposed compact merger → coherent radio burst models.
+   * Proposed compact merger → coherent radio burst models (Totani 2013, Lyutikov 2013).
    * Very tight window given FRB ms-precision timing.
    */
   gwFrbSec: number;
@@ -39,6 +43,7 @@ export interface CoincidenceWindows {
   /**
    * GRB → NU: ±500 s
    * Collapsar / long GRB → neutrino burst (prompt + extended).
+   * IceCube upper limits exist for multiple GRBs.
    */
   grbNuSec: number;
 
@@ -49,6 +54,33 @@ export interface CoincidenceWindows {
   grbFrbSec: number;
 
   /**
+   * EP → GW: ±86400 s (24 h)
+   * Einstein Probe X-ray counterparts may be delayed hours after merger
+   * (off-axis viewing, kilonova rise time, cocoon emission).
+   */
+  epGwSec: number;
+
+  /**
+   * EP → GRB: ±3600 s (1 h)
+   * Prompt X-ray afterglow from the same relativistic jet.
+   * EP/Swift XRT joint detections commonly within 1 h.
+   */
+  epGrbSec: number;
+
+  /**
+   * EP → NU: ±86400 s (24 h)
+   * Delayed X-ray + neutrino emission from disk winds or extended jet activity.
+   */
+  epNuSec: number;
+
+  /**
+   * NU → FRB: ±3600 s (1 h)
+   * Speculative coincident emission from energetic transients.
+   * No established physical model; conservative window.
+   */
+  nuFrbSec: number;
+
+  /**
    * Default catch-all window for any other pair.
    * ±60 s — conservative coincidence for unmodelled scenarios.
    */
@@ -57,10 +89,10 @@ export interface CoincidenceWindows {
   // ── Spatial coincidence factor ────────────────────────────────────────────
 
   /**
-   * Spatial coincidence factor (N-sigma).
+   * Spatial coincidence N-sigma factor.
    * A pair matches spatially when:
-   *   angularSeparation ≤ spatialFactor × (errorRadius_A + errorRadius_B)
-   * Default: 3.0 (3-sigma combined error)
+   *   angularSeparation ≤ spatialFactor × √(err_A² + err_B²)
+   * Default: 3.0 (3-sigma quadrature error region)
    */
   spatialFactor: number;
 
@@ -77,8 +109,8 @@ export interface CoincidenceWindows {
 
   /**
    * How far back (in minutes) to look for candidate events in the database.
-   * Should be ≥ (max temporal window / 60) + buffer.
-   * Default: 15 minutes.
+   * Default: 1440 minutes (24 h) — needed to capture delayed EP X-ray counterparts.
+   * For GW/GRB-only use cases, 15 min is sufficient.
    */
   dbLookbackMinutes: number;
 }
@@ -109,11 +141,15 @@ export function getCoincidenceWindows(): CoincidenceWindows {
     gwFrbSec:          envFloat("CORR_WINDOW_GW_FRB_SEC",   1),
     grbNuSec:          envFloat("CORR_WINDOW_GRB_NU_SEC",   500),
     grbFrbSec:         envFloat("CORR_WINDOW_GRB_FRB_SEC",  1),
+    epGwSec:           envFloat("CORR_WINDOW_EP_GW_SEC",    86400),
+    epGrbSec:          envFloat("CORR_WINDOW_EP_GRB_SEC",   3600),
+    epNuSec:           envFloat("CORR_WINDOW_EP_NU_SEC",    86400),
+    nuFrbSec:          envFloat("CORR_WINDOW_NU_FRB_SEC",   3600),
     defaultSec:        envFloat("CORR_WINDOW_DEFAULT_SEC",  60),
     spatialFactor:     envFloat("CORR_SPATIAL_FACTOR",      3.0),
     scoreHigh:         envFloat("CORR_SCORE_HIGH",          70),
     scoreMedium:       envFloat("CORR_SCORE_MEDIUM",        40),
     scoreLow:          envFloat("CORR_SCORE_LOW",           15),
-    dbLookbackMinutes: envFloat("CORR_DB_LOOKBACK_MINUTES", 15),
+    dbLookbackMinutes: envFloat("CORR_DB_LOOKBACK_MINUTES", 1440),
   };
 }

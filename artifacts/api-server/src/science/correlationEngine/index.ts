@@ -1,27 +1,38 @@
 /**
- * index.ts — Multi-Messenger Correlation Engine (Phase 5.4)
- * ----------------------------------------------------------
- * Public re-exports. Consumers import from this file only.
- *
- * Usage:
- *   import { correlate } from "../science/correlationEngine/index.js";
- *   import type { CorrelationResult, CorrelationInput } from "../science/correlationEngine/index.js";
- *
- * Phase 5.4 — AstroSentinel
+ * index.ts — Multi-Messenger Correlation Engine (Phase 6.0A)
+ * -----------------------------------------------------------
+ * Public re-exports for the correlation engine module.
  */
 
-export { correlate }                from "./engine.js";
-export { angularSeparationDeg }     from "./scorer.js";
-export { getPairingRule, isPhysicallyMotivatedPair } from "./pairingRules.js";
-export { getCoincidenceWindows }    from "./windows.js";
+// Core engine
+export { correlate }              from "./engine.js";
 
+// Configuration
+export { getCoincidenceWindows }  from "./windows.js";
+export type { CoincidenceWindows } from "./windows.js";
+
+// Scoring utilities
+export { angularSeparationDeg, scorePair } from "./scorer.js";
+
+// Pairing rules
+export { getPairingRule, isPhysicallyMotivatedPair, getAllPairingRules } from "./pairingRules.js";
+export type { PairingRule }       from "./pairingRules.js";
+
+// Database repository
+export {
+  saveCorrelation,
+  getCorrelationsForEvent,
+  getRecentHighConfidence,
+  getCorrelationPair,
+} from "./repository.js";
+
+// Types (re-export everything)
 export type {
+  CorrelationConfidence,
+  CorrelationType,
+  CorrelationEvent,
+  CorrelationMatch,
   CorrelationResult,
   CorrelationInput,
-  CorrelationMatch,
-  CorrelationEvent,
-  CorrelationConfidence,
-}                                   from "./types.js";
-
-export type { CoincidenceWindows }  from "./windows.js";
-export type { PairingRule }         from "./pairingRules.js";
+  StoredCorrelation,
+} from "./types.js";
