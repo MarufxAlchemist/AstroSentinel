@@ -4,6 +4,16 @@ AI coding session log. Newest entries at top. Never rewrite previous entries.
 
 ---
 
+## 2026-08-09 — Fix: Docker build failure — missing `eventCorrelations` export
+
+### Fixed
+- `lib/db/src/schema/index.ts` — The Core schema re-export block imported `eventCorrelations` (and its `EventCorrelation`/`InsertEventCorrelation` types) from `./events.js` but never re-exported them from the `@workspace/db` barrel. `artifacts/api-server/src/science/correlationEngine/repository.ts` imports `eventCorrelations` from `@workspace/db`, so the API server's esbuild bundle failed with "No matching export in ../../lib/db/src/index.ts for import eventCorrelations", breaking `docker compose up --build`.
+
+### Verified
+- `pnpm --filter @workspace/api-server run build` succeeds.
+
+---
+
 ## 2026-08-06 — Phase 5.6: AI Scientific Summary Generation
 
 ### Added

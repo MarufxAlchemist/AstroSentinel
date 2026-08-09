@@ -53,6 +53,7 @@ export {
   eventAnnotations,
   eventEmbeddings,
   aiCorrelationAnalysis,
+  eventCorrelations,
   eventsRelations,
   eventDetectionsRelations,
   eventLocalizationsRelations,
@@ -81,6 +82,8 @@ export type {
   InsertEventEmbedding,
   AiCorrelationAnalysis,
   InsertAiCorrelationAnalysis,
+  EventCorrelation,
+  InsertEventCorrelation,
 } from "./events.js";
 export type {
   AiScientificSummary,

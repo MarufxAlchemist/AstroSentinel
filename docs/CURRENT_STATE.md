@@ -66,6 +66,7 @@ Collaboration features have backend routing wired but minimal frontend integrati
 | `eventIngestion.ts` is a no-op stub but still imported | Low | `artifacts/api-server/src/lib/eventIngestion.ts` |
 | Both `bcrypt` and `bcryptjs` installed (only `bcryptjs` used) | Low | `artifacts/api-server/package.json` |
 | `NU` events not counted in stats `byType` | Low | `routes/events.ts` |
+| ~~`eventCorrelations` missing from `@workspace/db` barrel export, breaking API server Docker build~~ | Fixed 2026-08-09 | `lib/db/src/schema/index.ts` |
 
 ---
 
