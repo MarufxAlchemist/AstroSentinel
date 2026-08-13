@@ -61,7 +61,9 @@ Collaboration features have backend routing wired but minimal frontend integrati
 | Bug | Severity | Location |
 |---|---|---|
 | `byObservatory` always `[]` | Medium | `artifacts/api-server/src/routes/events.ts` |
-| `sun_distance` / `moon_distance` hardcoded to `90°` | Medium | Normalizer / alertFilter |
+| ~~`sun_distance` / `moon_distance` hardcoded to `90°`~~ — **misdiagnosis.** Astropy calc existed but (a) used mismatched ICRS/GCRS frames, wrong by up to ~150°, and (b) fell back to a fabricated `90.0`. Both fixed; all 304 rows recomputed. | Fixed 2026-08-14 | `backend/app/gcn/normalizer.py` |
+| `_safe_float(..., 0.0)` coerces missing **source** measurements (snr, errorRadius) to `0.0` | Medium | `backend/app/gcn/normalizer.py` |
+| `eventIngestion.ts` generates **random** sun/moon distances (`randomBetween(30,150)`) | Low (dead stub) | `artifacts/api-server/src/lib/eventIngestion.ts` |
 | `kafka_connected` in heartbeat always `true` even when disconnected | Low | Python WS manager |
 | `eventIngestion.ts` is a no-op stub but still imported | Low | `artifacts/api-server/src/lib/eventIngestion.ts` |
 | Both `bcrypt` and `bcryptjs` installed (only `bcryptjs` used) | Low | `artifacts/api-server/package.json` |

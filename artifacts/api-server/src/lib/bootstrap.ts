@@ -43,10 +43,10 @@ interface BootstrapEvent {
   peakFlux?:           number | null;
   chirpMass?:          number | null;
   luminosityDistance?: number | null;
-  galLat:              number;
-  galLon:              number;
-  sunDistance?:        number;
-  moonDistance?:       number;
+  galLat?:             number | null;
+  galLon?:             number | null;
+  sunDistance?:        number | null;
+  moonDistance?:       number | null;
   lifecycle?:          string;
   alertType?:          string;
   classificationTier?: string | null;
@@ -165,10 +165,12 @@ export async function runBootstrap(): Promise<void> {
             peakFlux:           ev.peakFlux           ?? null,
             chirpMass:          ev.chirpMass          ?? null,
             luminosityDistance: ev.luminosityDistance ?? null,
-            galLat:             safeFloat(ev.galLat),
-            galLon:             safeFloat(ev.galLon),
-            sunDistance:        safeFloat(ev.sunDistance ?? 90),
-            moonDistance:       safeFloat(ev.moonDistance ?? 90),
+            // DERIVED sky geometry — null (UNKNOWN) rather than a fabricated
+            // placeholder when the seed payload does not carry the value.
+            galLat:             ev.galLat       != null ? safeFloat(ev.galLat)       : null,
+            galLon:             ev.galLon       != null ? safeFloat(ev.galLon)       : null,
+            sunDistance:        ev.sunDistance  != null ? safeFloat(ev.sunDistance)  : null,
+            moonDistance:       ev.moonDistance != null ? safeFloat(ev.moonDistance) : null,
             latencyUs,
             lifecycle:          (ev.lifecycle  ?? "preliminary") as "preliminary" | "initial" | "update" | "confirmed",
             alertType:          ev.alertType          ?? null,

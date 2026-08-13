@@ -248,16 +248,30 @@ components:
           description: Luminosity distance (Mpc), GW only
         galLat:
           type: number
-          description: Galactic latitude
+          nullable: true
+          description: >-
+            DERIVED Galactic latitude in degrees (ICRS -> Galactic, astropy).
+            null means UNKNOWN - could not be responsibly derived.
         galLon:
           type: number
-          description: Galactic longitude
+          nullable: true
+          description: >-
+            DERIVED Galactic longitude in degrees (ICRS -> Galactic, astropy).
+            null means UNKNOWN - could not be responsibly derived.
         sunDistance:
           type: number
-          description: Angular distance from Sun (degrees)
+          nullable: true
+          description: >-
+            DERIVED angular separation from the Sun in degrees, evaluated in
+            GCRS at the detection epoch (astropy get_body). null means UNKNOWN -
+            never a placeholder value.
         moonDistance:
           type: number
-          description: Angular distance from Moon (degrees)
+          nullable: true
+          description: >-
+            DERIVED angular separation from the Moon in degrees, evaluated in
+            GCRS at the detection epoch (astropy get_body). null means UNKNOWN -
+            never a placeholder value.
         latencyUs:
           type: integer
           description: System latency in microseconds

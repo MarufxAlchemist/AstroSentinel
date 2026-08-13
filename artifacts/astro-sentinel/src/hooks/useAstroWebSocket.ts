@@ -105,10 +105,11 @@ interface RawEvent {
   snr: number;
   far: number;
   latencyUs: number;
-  galLon: number;
-  galLat: number;
-  sunDistance: number;
-  moonDistance: number;
+  // DERIVED sky geometry — null means UNKNOWN, never a placeholder.
+  galLon: number | null;
+  galLat: number | null;
+  sunDistance: number | null;
+  moonDistance: number | null;
   fluence: number | null;
   dm: number | null;
   raw: any;

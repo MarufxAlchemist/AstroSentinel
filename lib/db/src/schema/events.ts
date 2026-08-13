@@ -88,10 +88,12 @@ export const events = coreSchema.table("events", {
   chirpMass: doublePrecision("chirp_mass"),
   luminosityDistance: doublePrecision("luminosity_distance"),
   // Celestial geometry
-  galLat: doublePrecision("gal_lat").notNull(),
-  galLon: doublePrecision("gal_lon").notNull(),
-  sunDistance: doublePrecision("sun_distance").notNull(),
-  moonDistance: doublePrecision("moon_distance").notNull(),
+  // DERIVED sky geometry — computed from (ra, dec, detectionTime), not measured.
+  // NULL means "could not be responsibly derived", never zero or a typical value.
+  galLat: doublePrecision("gal_lat"),
+  galLon: doublePrecision("gal_lon"),
+  sunDistance: doublePrecision("sun_distance"),
+  moonDistance: doublePrecision("moon_distance"),
   redshift: doublePrecision("redshift"),
   // System fields
   latencyUs: bigserial("latency_us", { mode: "bigint" }).notNull(),

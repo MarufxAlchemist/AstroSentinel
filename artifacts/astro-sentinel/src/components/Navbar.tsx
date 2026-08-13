@@ -1,8 +1,7 @@
 import { Link, useLocation } from "wouter";
-import { Telescope, Search, Share2, Settings, Wifi, WifiOff, Sun, Moon, Bookmark } from "lucide-react";
+import { Telescope, Search, Settings, Wifi, WifiOff, Sun, Moon, Bookmark } from "lucide-react";
 import { useScienceMode } from "@/lib/ScienceModeContext";
 import { useTheme } from "@/lib/ThemeContext";
-import { NotificationBell } from "./NotificationBell";
 import { NotificationCenter } from "./notifications/NotificationCenter";
 import { ResearcherMenu } from "./ResearcherMenu";
 
@@ -38,14 +37,9 @@ export function Navbar({
         <button className="p-1.5 rounded hover:bg-accent hover:text-foreground transition-colors" title="Search">
           <Search className="w-3.5 h-3.5" />
         </button>
-        <button className="p-1.5 rounded hover:bg-accent hover:text-foreground transition-colors" title="Share">
-          <Share2 className="w-3.5 h-3.5" />
-        </button>
         <button className="p-1.5 rounded hover:bg-accent hover:text-foreground transition-colors" title="Settings">
           <Settings className="w-3.5 h-3.5" />
         </button>
-        {/* Notification bell */}
-        <NotificationBell />
         {/* Notification Center */}
         <NotificationCenter />
       </div>

@@ -72,14 +72,14 @@ export interface AstroEvent {
   chirpMass?: number | null;
   /** Luminosity distance (Mpc), GW only */
   luminosityDistance?: number | null;
-  /** Galactic latitude */
-  galLat: number;
-  /** Galactic longitude */
-  galLon: number;
-  /** Angular distance from Sun (degrees) */
-  sunDistance: number;
-  /** Angular distance from Moon (degrees) */
-  moonDistance: number;
+  /** DERIVED Galactic latitude in degrees (ICRS -> Galactic, astropy). null means UNKNOWN - could not be responsibly derived. */
+  galLat: number | null;
+  /** DERIVED Galactic longitude in degrees (ICRS -> Galactic, astropy). null means UNKNOWN - could not be responsibly derived. */
+  galLon: number | null;
+  /** DERIVED angular separation from the Sun in degrees, evaluated in GCRS at the detection epoch (astropy get_body). null means UNKNOWN - never a placeholder value. */
+  sunDistance: number | null;
+  /** DERIVED angular separation from the Moon in degrees, evaluated in GCRS at the detection epoch (astropy get_body). null means UNKNOWN - never a placeholder value. */
+  moonDistance: number | null;
   /** System latency in microseconds */
   latencyUs: number;
   createdAt: string;

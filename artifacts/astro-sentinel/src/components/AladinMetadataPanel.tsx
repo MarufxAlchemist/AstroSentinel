@@ -124,8 +124,8 @@ export function AladinMetadataPanel({ event, localization }: Props) {
         <div className="space-y-0">
           <CopyableRow label="RA" value={`${event.ra.toFixed(3)}°`} copyValue={event.ra.toFixed(6)} />
           <CopyableRow label="DEC" value={`${event.dec.toFixed(3)}°`} copyValue={event.dec.toFixed(6)} />
-          <Row label="Galactic Lon" value={`${event.galLon.toFixed(1)}°`} />
-          <Row label="Galactic Lat" value={`${event.galLat.toFixed(1)}°`} />
+          <Row label="Galactic Lon" value={formatDerived(event.galLon, 1)} />
+          <Row label="Galactic Lat" value={formatDerived(event.galLat, 1)} />
         </div>
       </div>
 
@@ -138,8 +138,8 @@ export function AladinMetadataPanel({ event, localization }: Props) {
             label="Error Radius" 
             value={event.errorRadius && event.errorRadius > 0 ? `${event.errorRadius.toFixed(1)} arcmin` : "N/A"} 
           />
-          <Row label="Sun Distance" value={event.sunDistance != null ? `${event.sunDistance.toFixed(1)}°` : "N/A"} />
-          <Row label="Moon Distance" value={event.moonDistance != null ? `${event.moonDistance.toFixed(1)}°` : "N/A"} />
+          <Row label="Sun Distance" value={formatDerived(event.sunDistance, 1)} />
+          <Row label="Moon Distance" value={formatDerived(event.moonDistance, 1)} />
           <Row 
             label="Detection Time" 
             value={
@@ -192,16 +192,16 @@ export function AladinMetadataPanel({ event, localization }: Props) {
         <div className="bg-black/30 rounded-lg p-3 text-xs space-y-2 border border-border/50">
           <div>
             <span className="text-muted-foreground">Sun Distance: </span>
-            <span className="font-mono text-foreground">{event.sunDistance?.toFixed(1)}° </span>
-            <span className={event.sunDistance > 45 ? "text-emerald-400" : "text-amber-400"}>
-              ({event.sunDistance > 45 ? "Good" : "Poor"})
+            <span className="font-mono text-foreground">{formatDerived(event.sunDistance, 1)} </span>
+            <span className={(event.sunDistance ?? 0) > 45 ? "text-emerald-400" : "text-amber-400"}>
+              ({(event.sunDistance ?? 0) > 45 ? "Good" : "Poor"})
             </span>
           </div>
           <div>
             <span className="text-muted-foreground">Moon Distance: </span>
-            <span className="font-mono text-foreground">{event.moonDistance?.toFixed(1)}° </span>
-            <span className={event.moonDistance > 45 ? "text-emerald-400" : "text-amber-400"}>
-              ({event.moonDistance > 45 ? "Good" : "Poor"})
+            <span className="font-mono text-foreground">{formatDerived(event.moonDistance, 1)} </span>
+            <span className={(event.moonDistance ?? 0) > 45 ? "text-emerald-400" : "text-amber-400"}>
+              ({(event.moonDistance ?? 0) > 45 ? "Good" : "Poor"})
             </span>
           </div>
           <div>

@@ -64,12 +64,12 @@ export function BasicInfo({ event }: Props) {
         <Row label="RA [deg]" value={event.ra.toFixed(4) + "°"} />
         <Row label="Dec [deg]" value={event.dec.toFixed(4) + "°"} />
         <Row label="Err radius" value={event.errorRadius.toFixed(2) + "'"} />
-        <Row label="Gal. lon" value={event.galLon.toFixed(2) + "°"} />
-        <Row label="Gal. lat" value={event.galLat.toFixed(2) + "°"} />
+        <Row label="Gal. lon" value={formatDerived(event.galLon, 2)} />
+        <Row label="Gal. lat" value={formatDerived(event.galLat, 2)} />
         <Row label="SNR" value={event.snr.toFixed(2) + " σ"} />
         <Row label="FAR" value={event.far.toExponential(3) + " Hz"} />
-        <Row label="Sun dist." value={event.sunDistance.toFixed(1) + "°"} />
-        <Row label="Moon dist." value={event.moonDistance.toFixed(1) + "°"} />
+        <Row label="Sun dist." value={formatDerived(event.sunDistance, 1)} />
+        <Row label="Moon dist." value={formatDerived(event.moonDistance, 1)} />
         <Row label="Latency" value={formatLatency(event.latencyUs)} />
         {event.fluence != null && <Row label="Fluence" value={event.fluence.toExponential(3) + " erg/cm²"} />}
         {event.dm != null && <Row label="DM" value={event.dm.toFixed(1) + " pc/cm³"} />}

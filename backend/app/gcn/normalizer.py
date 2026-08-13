@@ -20,14 +20,14 @@ from typing import Any
 # Falls back gracefully if astropy is not installed.
 # ---------------------------------------------------------------------------
 try:
-    import warnings
-    from astropy.coordinates import SkyCoord, get_body
-    from astropy.coordinates.errors import NonRotationTransformationWarning
+    from astropy.coordinates import GCRS, SkyCoord, get_body
     from astropy.time import Time
     import astropy.units as u
-    # Suppress the expected GCRS→ICRS precision note that fires on every
-    # solar-system body separation calculation.
-    warnings.filterwarnings("ignore", category=NonRotationTransformationWarning)
+    # NOTE: NonRotationTransformationWarning is deliberately NOT suppressed.
+    # It previously masked a real defect — see _sun_moon_distance(), where
+    # separations were being taken between mismatched ICRS/GCRS origins and
+    # were wrong by up to ~150°. If that warning starts firing again, a frame
+    # mismatch has been reintroduced; fix the frames rather than silencing it.
     _ASTROPY_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _ASTROPY_AVAILABLE = False
@@ -113,52 +113,72 @@ def _safe_float(val: Any, default: float = 0.0) -> float:
         return default
 
 
-def _ra_dec_to_gal(ra: float, dec: float) -> tuple[float, float]:
+def _valid_radec(ra: Any, dec: Any) -> bool:
+    """True only for finite coordinates inside physical ranges."""
+    try:
+        ra_f, dec_f = float(ra), float(dec)
+    except (TypeError, ValueError):
+        return False
+    if math.isnan(ra_f) or math.isnan(dec_f):
+        return False
+    if math.isinf(ra_f) or math.isinf(dec_f):
+        return False
+    return 0.0 <= ra_f < 360.0 and -90.0 <= dec_f <= 90.0
+
+
+def _ra_dec_to_gal(ra: float, dec: float) -> tuple[float | None, float | None]:
     """
-    Approximate equatorial → Galactic coordinate transform.
-    Uses the IAU 1958 pole (RA=192.8595°, Dec=27.1284°, l_NCP=122.932°).
-    Good to ~0.01° for display purposes.
+    DERIVED: equatorial (ICRS) → Galactic coordinate transform via Astropy.
+
+    Returns (None, None) — meaning UNKNOWN — if Astropy is unavailable or the
+    input coordinates are not physically valid. Never returns a fabricated
+    value: a wrong Galactic coordinate is worse than an absent one.
+
+    Provenance: ICRS → Galactic, astropy.coordinates.SkyCoord.
+
+    Parameters
+    ----------
+    ra, dec : float
+        ICRS coordinates in decimal degrees.
+
+    Returns
+    -------
+    (l, b) : tuple[float | None, float | None]
+        Galactic longitude/latitude in degrees, or (None, None) if UNKNOWN.
     """
-    ra_rad  = math.radians(ra)
-    dec_rad = math.radians(dec)
-    ra_gp   = math.radians(192.8595)
-    dec_gp  = math.radians(27.1284)
-    l_ncp   = math.radians(122.932)
-
-    sin_b = (
-        math.sin(dec_rad) * math.sin(dec_gp)
-        + math.cos(dec_rad) * math.cos(dec_gp) * math.cos(ra_rad - ra_gp)
-    )
-    b = math.degrees(math.asin(sin_b))
-
-    cos_l_minus_l_ncp = (
-        math.cos(dec_rad) * math.sin(ra_rad - ra_gp)
-        / math.cos(math.radians(b))
-    )
-    sin_l_minus_l_ncp = (
-        (math.sin(dec_rad) - math.sin(math.radians(b)) * math.sin(dec_gp))
-        / (math.cos(math.radians(b)) * math.cos(dec_gp))
-    )
-    l = math.degrees(l_ncp - math.atan2(sin_l_minus_l_ncp, cos_l_minus_l_ncp))
-    l = l % 360
-
-    return round(l, 4), round(b, 4)
+    if not _ASTROPY_AVAILABLE or not _valid_radec(ra, dec):
+        return None, None
+    try:
+        gal = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame="icrs").galactic
+        return round(float(gal.l.deg) % 360.0, 4), round(float(gal.b.deg), 4)
+    except Exception as exc:  # pragma: no cover
+        print(f"[normalizer] galactic transform failed (ra={ra}, dec={dec}): {exc}")
+        return None, None
 
 
 def _sun_moon_distance(
     ra: float,
     dec: float,
     detection_time_iso: str | None = None,
-) -> tuple[float, float]:
+) -> tuple[float | None, float | None]:
     """
-    Angular separation (degrees) between the event sky position and the
-    Sun / Moon at the moment of detection.
+    DERIVED: angular separation (degrees) between the event sky position and
+    the Sun / Moon at the moment of detection.
 
-    Uses Astropy's built-in DE430 ephemeris via get_body().  Falls back
-    to 90.0 / 90.0 if:
+    Uses Astropy's built-in ephemeris via get_body().
+
+    Returns (None, None) — meaning UNKNOWN — if:
       * Astropy is not installed
       * detection_time_iso is None or unparseable
+      * the coordinates are not physically valid
       * the ephemeris calculation raises for any reason
+
+    This function MUST NOT invent a separation. It previously returned
+    90.0/90.0 on failure, which is indistinguishable from a genuine ~90°
+    separation once persisted and silently corrupted the archive.
+
+    Provenance: astropy.coordinates.get_body(), evaluated at the event's
+    detection time in UTC.
 
     Parameters
     ----------
@@ -168,15 +188,17 @@ def _sun_moon_distance(
         Declination in decimal degrees (ICRS / J2000).
     detection_time_iso : str | None
         ISO-8601 UTC timestamp of the event (e.g. "2026-06-07T12:34:56Z").
-        If None, returns the fallback values.
 
     Returns
     -------
-    (sun_deg, moon_deg) : tuple[float, float]
-        Angular separations in degrees, rounded to 4 decimal places.
+    (sun_deg, moon_deg) : tuple[float | None, float | None]
+        Angular separations in degrees rounded to 4 dp, or (None, None)
+        if the quantity is UNKNOWN.
     """
     if not _ASTROPY_AVAILABLE or not detection_time_iso:
-        return 90.0, 90.0
+        return None, None
+    if not _valid_radec(ra, dec):
+        return None, None
     try:
         # Astropy Time(iso) requires the string without a tz offset.
         # Strip trailing Z or +00:00 and pass scale="utc" explicitly.
@@ -187,14 +209,26 @@ def _sun_moon_distance(
             ts = ts[:-6]
         t = Time(ts, format="isot", scale="utc")
         event_coord = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame="icrs")
-        sun_coord   = get_body("sun",  t)
-        moon_coord  = get_body("moon", t)
-        sun_sep  = round(float(event_coord.separation(sun_coord).deg),  4)
-        moon_sep = round(float(event_coord.separation(moon_coord).deg), 4)
+
+        # get_body() returns a GEOCENTRIC (GCRS) position carrying a finite
+        # distance (the Sun is ~1 AU away). Taking .separation() directly
+        # between a distance-less ICRS (barycentric) coordinate and that GCRS
+        # coordinate forces Astropy to reconcile two different origins, which
+        # for a nearby solar-system body swings the apparent direction by up
+        # to ~150° and yields a physically meaningless angle.
+        #
+        # The event position must be transformed into GCRS at the observation
+        # epoch first, so both coordinates share an origin and epoch.
+        #
+        # This is what the previously-suppressed NonRotationTransformationWarning
+        # was reporting. Do not silence that warning again.
+        event_gcrs = event_coord.transform_to(GCRS(obstime=t))
+        sun_sep  = round(float(event_gcrs.separation(get_body("sun",  t)).deg), 4)
+        moon_sep = round(float(event_gcrs.separation(get_body("moon", t)).deg), 4)
         return sun_sep, moon_sep
     except Exception as exc:  # pragma: no cover
         print(f"[normalizer] sun/moon separation failed ({detection_time_iso}): {exc}")
-        return 90.0, 90.0
+        return None, None
 
 
 def _latency_us(detection_time_iso: str) -> int:

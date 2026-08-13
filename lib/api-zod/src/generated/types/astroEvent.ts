@@ -40,13 +40,13 @@ export interface AstroEvent {
   /** Luminosity distance (Mpc), GW only */
   luminosityDistance?: number | null;
   /** Galactic latitude */
-  galLat: number;
+  galLat: number | null;
   /** Galactic longitude */
-  galLon: number;
+  galLon: number | null;
   /** Angular distance from Sun (degrees) */
-  sunDistance: number;
+  sunDistance: number | null;
   /** Angular distance from Moon (degrees) */
-  moonDistance: number;
+  moonDistance: number | null;
   /** System latency in microseconds */
   latencyUs: number;
   createdAt: string;

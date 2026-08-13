@@ -177,9 +177,9 @@ function EventBrief({ event }: { event: AstroEvent }) {
           <div><span className="text-muted-foreground">FAR: </span><span className="text-foreground">{event.far.toExponential(3)} Hz</span></div>
           <div><span className="text-muted-foreground">Err radius: </span><span className="text-foreground">{event.errorRadius.toFixed(2)}'</span></div>
           <div><span className="text-muted-foreground">Latency: </span><span className="text-foreground">{formatLatency(event.latencyUs)}</span></div>
-          <div><span className="text-muted-foreground">Gal. lon: </span><span className="text-foreground">{event.galLon.toFixed(2)}°</span></div>
-          <div><span className="text-muted-foreground">Gal. lat: </span><span className="text-foreground">{event.galLat.toFixed(2)}°</span></div>
-          <div><span className="text-muted-foreground">Sun dist: </span><span className="text-foreground">{event.sunDistance.toFixed(1)}°</span></div>
+          <div><span className="text-muted-foreground">Gal. lon: </span><span className="text-foreground">{formatDerived(event.galLon, 2)}</span></div>
+          <div><span className="text-muted-foreground">Gal. lat: </span><span className="text-foreground">{formatDerived(event.galLat, 2)}</span></div>
+          <div><span className="text-muted-foreground">Sun dist: </span><span className="text-foreground">{formatDerived(event.sunDistance, 1)}</span></div>
           {event.fluence != null && <div><span className="text-muted-foreground">Fluence: </span><span className="text-foreground">{event.fluence.toExponential(3)} erg/cm²</span></div>}
           {event.dm != null && <div><span className="text-muted-foreground">DM: </span><span className="text-foreground">{event.dm.toFixed(1)} pc/cm³</span></div>}
         </>}
@@ -260,10 +260,10 @@ function RightPanel({ event }: { event: AstroEvent | null }) {
           <h3 className="text-xs font-semibold text-foreground mb-2 uppercase tracking-wider">Selected source:</h3>
           <p className="text-[11px] text-muted-foreground leading-relaxed font-sans">{summary}</p>
           <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] font-mono">
-            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Gal. Lon</span><span className="text-foreground">{event.galLon.toFixed(2)}°</span></div>
-            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Gal. Lat</span><span className="text-foreground">{event.galLat.toFixed(2)}°</span></div>
-            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Sun dist.</span><span className="text-foreground">{event.sunDistance.toFixed(1)}°</span></div>
-            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Moon dist.</span><span className="text-foreground">{event.moonDistance.toFixed(1)}°</span></div>
+            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Gal. Lon</span><span className="text-foreground">{formatDerived(event.galLon, 2)}</span></div>
+            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Gal. Lat</span><span className="text-foreground">{formatDerived(event.galLat, 2)}</span></div>
+            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Sun dist.</span><span className="text-foreground">{formatDerived(event.sunDistance, 1)}</span></div>
+            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Moon dist.</span><span className="text-foreground">{formatDerived(event.moonDistance, 1)}</span></div>
             <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">FAR</span><span className="text-foreground">{event.far.toExponential(2)} Hz</span></div>
             <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Err radius</span><span className="text-foreground">{event.errorRadius.toFixed(2)}'</span></div>
             {event.fluence != null && (<div className="flex justify-between border-b border-border/50 pb-0.5 col-span-2"><span className="text-muted-foreground">Fluence</span><span className="text-foreground">{event.fluence.toExponential(3)} erg/cm²</span></div>)}

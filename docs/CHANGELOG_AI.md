@@ -4,6 +4,43 @@ AI coding session log. Newest entries at top. Never rewrite previous entries.
 
 ---
 
+## 2026-08-14 — Scientific Integrity Phase 1: sky-geometry provenance
+
+### Critical fix — Sun/Moon separations were wrong by up to ~150°
+- `backend/app/gcn/normalizer.py` — `_sun_moon_distance()` took `.separation()` between a barycentric **ICRS** event coordinate and the **GCRS** (geocentric, finite-distance) body position returned by `get_body()`. Astropy reconciles the two origins, which for a ~1 AU body swings the apparent direction wildly. Anchor case (RA 237.42°, Dec −28.74°, 2026-06-09T08:23:11Z) returned **12.77°** where the true separation is **161.36°**. Fixed by transforming the event into `GCRS(obstime=t)` before separating.
+- The `NonRotationTransformationWarning` filter at the top of the module was suppressing astropy's warning about exactly this. Removed, with a comment explaining why it must not be reinstated.
+
+### Fabricated values eliminated
+- `_sun_moon_distance()` returned `90.0, 90.0` on missing timestamp / ephemeris failure — indistinguishable from a genuine ~90° separation once stored. Now returns `None` (UNKNOWN).
+- `_ra_dec_to_gal()` was a hand-rolled IAU 1958 approximation (self-documented ~0.01°, divide-by-zero at b = ±90°). Replaced with astropy ICRS→Galactic; returns `None` when not derivable.
+- `artifacts/api-server/src/lib/kafkaConsumer.ts` — `_safeFloat(..., 90)` re-fabricated the same placeholder in the Node ingestion path, which would have silently undone the normalizer fix. Now passes `null` through.
+- `artifacts/api-server/src/lib/bootstrap.ts` — same `?? 90` fallback removed.
+- Added `_valid_radec()` guard (finite + physical range) shared by both calculations.
+
+### Schema — UNKNOWN is now representable
+- `lib/db/migrations/0010_nullable_derived_coords.sql` — dropped NOT NULL on `gal_lat`, `gal_lon`, `sun_distance`, `moon_distance` with column COMMENTs recording DERIVED provenance. These are derived, not measured; NOT NULL structurally forced the pipeline to fabricate. Applied to the live database.
+- `lib/db/src/schema/events.ts` updated to match.
+
+### Backfill
+- `backend/scripts/backfill_derived_sky_geometry.py` (dry-run by default, `--apply` to commit) — recomputed all 304 rows from their own `ra`/`dec`/`detection_time`. All 304 changed. Post-state: 0 rows at the fabricated `90.0`, 0 outside `[0,180]`, 0 invalid galactic coords, range 0.22°–161.36°.
+- Note: psycopg2 returns tz-aware timestamps in the session timezone (+05:30 here); these are converted to UTC explicitly before reaching astropy, otherwise every ephemeris is evaluated at the wrong instant.
+
+### API / frontend propagation
+- `lib/api-spec/openapi.yaml` — the 4 fields are now `nullable: true` (kept in `required`: the key is always present, the value may be null) with DERIVED provenance in the descriptions.
+- Regenerated-equivalent updates to `lib/api-zod` (`.nullable()`) and `lib/api-client-react` (`number | null`).
+- `formatters.ts` — added `formatDerived(value, digits, unit)` rendering `—` for UNKNOWN. Applied across `event-detail.tsx`, `dashboard.tsx`, `BasicInfo.tsx`, `AladinMetadataPanel.tsx` (previously unguarded `.toFixed()` would have thrown on null).
+- `useAstroWebSocket.ts` event type updated to `number | null`.
+
+### Tests
+- `backend/tests/test_sky_geometry.py` — 28 tests, all passing. Pins the anchor case, cross-checks it against an independent spherical law-of-cosines calculation, explicitly asserts the wrong 12.77° value cannot return, and verifies UNKNOWN is never fabricated.
+
+### Known remaining (not addressed in this phase)
+- `_safe_float(val, default=0.0)` in the normalizer still coerces missing **source** measurements (snr, errorRadius) to `0.0`. Source-field nullability is a separate migration.
+- `artifacts/api-server/src/lib/eventIngestion.ts` generates **random** sun/moon distances (`randomBetween(30,150)`). It is a documented no-op stub, but the code is still present.
+- No provenance table yet: provenance currently lives in schema comments and OpenAPI descriptions, not per-value rows.
+
+---
+
 ## 2026-08-14 — Fix: Bookmarks not persisting + Event Archive not scrolling
 
 ### Fixed

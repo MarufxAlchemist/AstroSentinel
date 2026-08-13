@@ -192,10 +192,14 @@ async function _handleAlert(envelope: Record<string, unknown>): Promise<void> {
       peakFlux:           event["peakFlux"] != null ? _safeFloat(event["peakFlux"]) : null,
       chirpMass:          event["chirpMass"] != null ? _safeFloat(event["chirpMass"]) : null,
       luminosityDistance: event["luminosityDistance"] != null ? _safeFloat(event["luminosityDistance"]) : null,
-      galLat:             _safeFloat(event["galLat"]),
-      galLon:             _safeFloat(event["galLon"]),
-      sunDistance:        _safeFloat(event["sunDistance"], 90),
-      moonDistance:       _safeFloat(event["moonDistance"], 90),
+      // DERIVED sky geometry — computed upstream by the Python normalizer.
+      // Pass null (UNKNOWN) straight through; never substitute a placeholder.
+      // These previously defaulted to 90, re-fabricating the exact value the
+      // normalizer was fixed to stop inventing.
+      galLat:             event["galLat"]       != null ? _safeFloat(event["galLat"])       : null,
+      galLon:             event["galLon"]       != null ? _safeFloat(event["galLon"])       : null,
+      sunDistance:        event["sunDistance"]  != null ? _safeFloat(event["sunDistance"])  : null,
+      moonDistance:       event["moonDistance"] != null ? _safeFloat(event["moonDistance"]) : null,
       latencyUs,
       // Alert filtering metadata
       lifecycle:          lifecycle as Lifecycle,
