@@ -92,7 +92,7 @@ router.post("/events/:eventId/bookmark", requireAuth, async (req, res) => {
   const eventNumId = parseInt(rawId ?? "", 10);
   if (isNaN(eventNumId)) { res.status(400).json({ error: "eventId must be numeric" }); return; }
 
-  const { note } = req.body as { note?: string };
+  const { note } = (req.body ?? {}) as { note?: string };
 
   const actorMember = await resolveActorLab(actor.userId as string);
   if (!actorMember) { res.status(403).json({ error: "Not a lab member" }); return; }
