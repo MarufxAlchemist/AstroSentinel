@@ -4,6 +4,22 @@ AI coding session log. Newest entries at top. Never rewrite previous entries.
 
 ---
 
+## 2026-08-14 — Fix: Bookmarks not persisting + Event Archive not scrolling
+
+### Fixed
+- `lib/db/migrations/0002_event_bookmarks.sql` — Applied directly to the database. The `tenant.event_bookmarks` table did not exist at all (migration file existed in the repo but was never run against this DB), so every bookmark create/list/delete request was failing server-side. The event-detail page's optimistic UI update flipped the "Bookmarked" button regardless of request success, masking the failure.
+- `artifacts/astro-sentinel/src/pages/event-detail.tsx` — `toggleBookmark()` now only flips local state when the fetch response is `ok`, so a failed bookmark request no longer lies to the user.
+- `artifacts/astro-sentinel/src/pages/events.tsx` — Added `min-h-0` to the scrollable event grid container. Without it, the `flex-1 overflow-y-auto` div defaulted to `min-height: auto` and grew to fit all content instead of scrolling, so content past the first screenful was clipped by the ancestor `overflow-hidden` chain instead of being reachable via scroll.
+
+---
+
+## 2026-08-13 — Fix: Research Team invitations always failed with "Network error"
+
+### Fixed
+- `artifacts/api-server/src/routes/team.ts` — `GET/POST/DELETE /team/invitations` were never implemented server-side even though the frontend (`team.tsx`) called them. Requests 404'd with Express's default HTML error page, and the frontend's `res.json()` threw parsing it, surfacing as a generic "Network error". Added all three routes backed by the existing `labInvitations` table (already used by the registration accept-invite flow), including sending an actual invite email via the existing `EmailProvider` abstraction.
+
+---
+
 ## 2026-08-09 — Fix: Docker build failure — missing `eventCorrelations` export
 
 ### Fixed

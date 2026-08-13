@@ -17,7 +17,7 @@ export function NotificationPreferences() {
   const { token } = useAuth();
   const queryClient = useQueryClient();
 
-  const { data: prefs, isLoading, isError } = useQuery<NotificationPreferencesType>({
+  const { data: prefs, isLoading, isError, refetch, isRefetching } = useQuery<NotificationPreferencesType>({
     queryKey: ["notificationPreferences", token],
     queryFn: async () => {
       if (!token) throw new Error("Not authenticated");
@@ -28,7 +28,8 @@ export function NotificationPreferences() {
       return res.json();
     },
     enabled: !!token,
-    retry: false,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
   });
 
   const updateMutation = useMutation({
@@ -132,6 +133,10 @@ export function NotificationPreferences() {
       <div className="flex flex-col items-center justify-center h-64 space-y-4">
         <AlertTriangle className="h-8 w-8 text-destructive" />
         <p className="text-sm text-muted-foreground">Failed to load preferences.</p>
+        <Button variant="outline" size="sm" disabled={isRefetching} onClick={() => refetch()}>
+          {isRefetching && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          Try again
+        </Button>
       </div>
     );
   }

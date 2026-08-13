@@ -70,11 +70,11 @@ export default function EventDetailPage() {
     setBookmarkLoading(true);
     try {
       const method = bookmarked ? "DELETE" : "POST";
-      await fetch(`/api/events/${event.id}/bookmark`, {
+      const res = await fetch(`/api/events/${event.id}/bookmark`, {
         method,
         headers: { Authorization: `Bearer ${token}` },
       });
-      setBookmarked((v) => !v);
+      if (res.ok) setBookmarked((v) => !v);
     } catch {
       // silent
     } finally {

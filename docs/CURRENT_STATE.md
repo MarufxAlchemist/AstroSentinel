@@ -67,6 +67,9 @@ Collaboration features have backend routing wired but minimal frontend integrati
 | Both `bcrypt` and `bcryptjs` installed (only `bcryptjs` used) | Low | `artifacts/api-server/package.json` |
 | `NU` events not counted in stats `byType` | Low | `routes/events.ts` |
 | ~~`eventCorrelations` missing from `@workspace/db` barrel export, breaking API server Docker build~~ | Fixed 2026-08-09 | `lib/db/src/schema/index.ts` |
+| ~~`/team/invitations` routes missing entirely, "Send Invite" always failed with Network error~~ | Fixed 2026-08-13 | `artifacts/api-server/src/routes/team.ts` |
+| ~~`tenant.event_bookmarks` table missing from DB (migration 0002 never applied) — bookmarking silently no-opped~~ | Fixed 2026-08-14 | `lib/db/migrations/0002_event_bookmarks.sql` |
+| ~~Event Archive grid didn't scroll (missing `min-h-0` on flex child)~~ | Fixed 2026-08-14 | `artifacts/astro-sentinel/src/pages/events.tsx` |
 
 ---
 
