@@ -227,6 +227,10 @@ export function SkyMap({ events, selectedEvent, onSelectEvent }: SkyMapProps) {
     // Events
     const eventGroup = document.createElementNS(ns, 'g');
     events.forEach(event => {
+      // An event with no reported position cannot be plotted. Skipping is the
+      // honest behaviour — a null coordinate would coerce to 0 and draw the
+      // event at (0, 0), which is a real place on the sky.
+      if (event.ra == null || event.dec == null) return;
       const lon = event.ra > 180 ? event.ra - 360 : event.ra;
       const lat = event.dec;
       if (lat < -90 || lat > 90) return;

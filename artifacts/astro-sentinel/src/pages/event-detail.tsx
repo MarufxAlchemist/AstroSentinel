@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useParams, Link } from "wouter";
 import { useGetEvent, getGetEventQueryKey } from "@workspace/api-client-react";
 import { EventBadge } from "@/components/EventBadge";
-import { formatMicrosecondDate, formatLatency, formatDerived } from "@/lib/formatters";
+import { formatMicrosecondDate, formatLatency, formatDerived, formatMeasured, formatExp, formatFarInterval } from "@/lib/formatters";
 import { ArrowLeft, Target, Map, Activity, Clock, Zap, Database, FlaskConical, Bookmark, BookmarkCheck } from "lucide-react";
 import { CorrelationAnalysisPanel } from "@/components/CorrelationAnalysisPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -252,15 +252,15 @@ export default function EventDetailPage() {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
                 <div>
                   <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Right Ascension</p>
-                  <p className="font-mono text-lg">{event.ra.toFixed(4)}&deg;</p>
+                  <p className="font-mono text-lg">{formatMeasured(event.ra, 4, "°")}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Declination</p>
-                  <p className="font-mono text-lg">{event.dec.toFixed(4)}&deg;</p>
+                  <p className="font-mono text-lg">{formatMeasured(event.dec, 4, "°")}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Error Radius</p>
-                  <p className="font-mono text-lg text-amber-500">{event.errorRadius.toFixed(2)}'</p>
+                  <p className="font-mono text-lg text-amber-500">{formatMeasured(event.errorRadius, 2, "'")}</p>
                 </div>
                 {scienceMode && (
                   <>
@@ -299,22 +299,22 @@ export default function EventDetailPage() {
               <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Signal-to-Noise Ratio (SNR)</p>
                 <div className="flex items-end gap-2">
-                  <p className="font-mono text-3xl font-bold">{event.snr.toFixed(2)}</p>
+                  <p className="font-mono text-3xl font-bold">{formatMeasured(event.snr, 2)}</p>
                   <span className="text-sm text-muted-foreground mb-1">&sigma;</span>
                 </div>
                 <div className="w-full h-1.5 bg-muted mt-2 rounded-full overflow-hidden">
                   <div 
                     className="h-full bg-primary" 
-                    style={{ width: `${Math.min(100, (event.snr / 20) * 100)}%` }}
+                    style={{ width: `${Math.min(100, ((event.snr ?? 0) / 20) * 100)}%` }}
                   />
                 </div>
               </div>
 
               <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">False Alarm Rate (FAR)</p>
-                <p className="font-mono text-lg">{event.far.toExponential(2)} Hz</p>
+                <p className="font-mono text-lg">{formatExp(event.far, 2, " Hz")}</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  1 per {(1 / event.far / (3600 * 24 * 365)).toFixed(1)} years
+                  {formatFarInterval(event.far)}
                 </p>
               </div>
 

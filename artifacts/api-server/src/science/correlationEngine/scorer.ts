@@ -150,6 +150,36 @@ export function scorePair(
     };
   }
 
+  // ── Position required for any spatial claim ───────────────────────────────
+  // A missing sky position must never be treated as a coordinate. JavaScript
+  // coerces null to 0 inside the haversine, which would yield a separation of
+  // exactly 0° — a *perfect* spatial match — and manufacture multi-messenger
+  // "associations" between events that simply have no position at all.
+  // 92% of the archive had no position before migration 0011, so this path is
+  // not hypothetical.
+  const positionKnown =
+    primary.ra   != null && primary.dec   != null &&
+    candidate.ra != null && candidate.dec != null;
+
+  if (!positionKnown) {
+    return {
+      candidate,
+      deltaTimeSec:           0,
+      angularSeparationDeg:   0,
+      combinedErrorDeg:       0,
+      temporalScore:          0,
+      spatialScore:           0,
+      temporalMatch:          false,
+      spatialMatch:           false,
+      pairingWeight:          0,
+      correlationType:        "speculative",
+      score:                  0,
+      reasoning:
+        "Sky position unavailable for one or both events — spatial coincidence " +
+        "cannot be assessed, so no correlation is claimed.",
+    };
+  }
+
   // ── Temporal ──────────────────────────────────────────────────────────────
   const tPrimary   = new Date(primary.detectionTime).getTime();
   const tCandidate = new Date(candidate.detectionTime).getTime();

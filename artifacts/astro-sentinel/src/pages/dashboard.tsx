@@ -3,7 +3,7 @@ import { useAstroWebSocket } from "@/hooks/useAstroWebSocket";
 import { useListEvents, useGetEventStats } from "@workspace/api-client-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { AstroEvent } from "@workspace/api-client-react/src/generated/api.schemas";
-import { formatMicrosecondDate, formatLatency } from "@/lib/formatters";
+import { formatMicrosecondDate, formatLatency, formatMeasured, formatExp } from "@/lib/formatters";
 import { useScienceMode } from "@/lib/ScienceModeContext";
 import { SciencePanel } from "@/components/SciencePanel";
 
@@ -138,10 +138,10 @@ function SidebarItem({ event, selected, isNew, onClick, scienceMode }: { event: 
         </div>
         {scienceMode && (
           <div className="mt-0.5 grid grid-cols-2 gap-x-1 text-[9px] font-mono text-muted-foreground">
-            <span>RA {event.ra.toFixed(1)}°</span>
-            <span>Dec {event.dec.toFixed(1)}°</span>
-            <span>SNR {event.snr.toFixed(1)}σ</span>
-            <span>FAR {event.far.toExponential(1)}</span>
+            <span>RA {formatMeasured(event.ra, 1, "°")}</span>
+            <span>Dec {formatMeasured(event.dec, 1, "°")}</span>
+            <span>SNR {formatMeasured(event.snr, 1, "σ")}</span>
+            <span>FAR {formatExp(event.far, 1)}</span>
           </div>
         )}
       </div>
@@ -168,14 +168,14 @@ function EventBrief({ event }: { event: AstroEvent }) {
       </div>
       <div className={`flex-1 grid gap-x-4 gap-y-0.5 text-[11px] font-mono ${scienceMode ? "grid-cols-3" : "grid-cols-2"}`}>
         <div><span className="text-muted-foreground">Date [UTC]: </span><span className="text-foreground">{dateStr.slice(0, 19).replace("T", " ")}</span></div>
-        <div><span className="text-muted-foreground">Right ascension [deg]: </span><span className="text-foreground">{event.ra.toFixed(2)}</span></div>
-        <div><span className="text-muted-foreground">Declination [deg]: </span><span className="text-foreground">{event.dec.toFixed(2)}</span></div>
+        <div><span className="text-muted-foreground">Right ascension [deg]: </span><span className="text-foreground">{formatMeasured(event.ra, 2)}</span></div>
+        <div><span className="text-muted-foreground">Declination [deg]: </span><span className="text-foreground">{formatMeasured(event.dec, 2)}</span></div>
         <div><span className="text-muted-foreground">observatory: </span><span className="text-foreground">{event.observatory}</span></div>
         <div><span className="text-muted-foreground">instrument: </span><span className="text-foreground">{event.observatory}/{event.eventType}</span></div>
-        <div><span className="text-muted-foreground">SNR: </span><span className="text-foreground">{event.snr.toFixed(1)} σ</span></div>
+        <div><span className="text-muted-foreground">SNR: </span><span className="text-foreground">{formatMeasured(event.snr, 1, " σ")}</span></div>
         {scienceMode && <>
-          <div><span className="text-muted-foreground">FAR: </span><span className="text-foreground">{event.far.toExponential(3)} Hz</span></div>
-          <div><span className="text-muted-foreground">Err radius: </span><span className="text-foreground">{event.errorRadius.toFixed(2)}'</span></div>
+          <div><span className="text-muted-foreground">FAR: </span><span className="text-foreground">{formatExp(event.far, 3, " Hz")}</span></div>
+          <div><span className="text-muted-foreground">Err radius: </span><span className="text-foreground">{formatMeasured(event.errorRadius, 2, "'")}</span></div>
           <div><span className="text-muted-foreground">Latency: </span><span className="text-foreground">{formatLatency(event.latencyUs)}</span></div>
           <div><span className="text-muted-foreground">Gal. lon: </span><span className="text-foreground">{formatDerived(event.galLon, 2)}</span></div>
           <div><span className="text-muted-foreground">Gal. lat: </span><span className="text-foreground">{formatDerived(event.galLat, 2)}</span></div>
@@ -191,10 +191,13 @@ function EventBrief({ event }: { event: AstroEvent }) {
 function generateSummary(event: AstroEvent): string {
   const dateStr = formatMicrosecondDate(event.detectionTime).slice(0, 19).replace("T", " ");
   const type = typeLabel(event.eventType);
-  const raDec = `(RA: ${event.ra.toFixed(2)}°, Dec: ${event.dec.toFixed(2)}°)`;
-  const err = event.errorRadius.toFixed(2);
-  const snr = event.snr.toFixed(1);
-  const far = event.far.toExponential(2);
+  const hasPosition = event.ra != null && event.dec != null;
+  const raDec = hasPosition
+    ? `(RA: ${event.ra!.toFixed(2)}°, Dec: ${event.dec!.toFixed(2)}°)`
+    : "(position not reported)";
+  const err = formatMeasured(event.errorRadius, 2);
+  const snr = formatMeasured(event.snr, 1);
+  const far = formatExp(event.far, 2);
   let body = `On ${dateStr} UTC, the ${event.observatory} instrument detected a ${type} (${event.eventType}) named ${event.eventId}. This event was observed at coordinates ${raDec} with a localization uncertainty of approximately ${err} arcminutes.`;
   if (event.eventType === "GRB" && event.fluence != null) {
     body += ` The measured fluence of this burst was ${event.fluence.toExponential(3)} erg/cm², placing it among the detected gamma-ray transients in this observation window. The signal-to-noise ratio of ${snr}σ and false alarm rate of ${far} Hz indicate a statistically significant detection.`;
@@ -265,7 +268,7 @@ function RightPanel({ event }: { event: AstroEvent | null }) {
             <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Sun dist.</span><span className="text-foreground">{formatDerived(event.sunDistance, 1)}</span></div>
             <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Moon dist.</span><span className="text-foreground">{formatDerived(event.moonDistance, 1)}</span></div>
             <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">FAR</span><span className="text-foreground">{event.far.toExponential(2)} Hz</span></div>
-            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Err radius</span><span className="text-foreground">{event.errorRadius.toFixed(2)}'</span></div>
+            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Err radius</span><span className="text-foreground">{formatMeasured(event.errorRadius, 2, "'")}</span></div>
             {event.fluence != null && (<div className="flex justify-between border-b border-border/50 pb-0.5 col-span-2"><span className="text-muted-foreground">Fluence</span><span className="text-foreground">{event.fluence.toExponential(3)} erg/cm²</span></div>)}
             {event.dm != null && (<div className="flex justify-between border-b border-border/50 pb-0.5 col-span-2"><span className="text-muted-foreground">DM</span><span className="text-foreground">{event.dm.toFixed(1)} pc/cm³</span></div>)}
             <div className="flex justify-between border-b border-border/50 pb-0.5 col-span-2"><span className="text-muted-foreground">Latency</span><span className="text-foreground">{formatLatency(event.latencyUs)}</span></div>

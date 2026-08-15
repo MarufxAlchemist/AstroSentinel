@@ -18,15 +18,15 @@ export interface AstroEvent {
   /** ISO timestamp with microsecond precision */
   detectionTime: string;
   /** Right Ascension in degrees */
-  ra: number;
+  ra: number | null;
   /** Declination in degrees */
-  dec: number;
+  dec: number | null;
   /** Error radius in arcminutes */
-  errorRadius: number;
+  errorRadius: number | null;
   /** Signal-to-noise ratio */
-  snr: number;
+  snr: number | null;
   /** False alarm rate (Hz) */
-  far: number;
+  far: number | null;
   /** Fluence (erg/cm²), GRB only */
   fluence?: number | null;
   /** Dispersion measure (pc/cm³), FRB only */

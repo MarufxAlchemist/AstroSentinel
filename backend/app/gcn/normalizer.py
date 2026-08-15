@@ -60,22 +60,28 @@ def normalize(topic: str, raw: dict[str, Any]) -> dict[str, Any]:
         "eventType":    meta.event_type,
         "observatory":  meta.observatory,
         "topic":        topic,
-        # Fields every parser must fill; defaults here protect against
-        # a parser raising before it sets them.
+        # Fields every parser must fill. These defaults apply when a parser
+        # raises before setting them — i.e. exactly when nothing is known.
+        # They are None (UNKNOWN), never 0.0: a parse failure must not emit a
+        # normalized event that claims to sit at (0, 0) with SNR 0.
         "eventId":      _make_event_id(meta.event_type),
         "detectionTime": _now_iso(),
-        "ra":            0.0,
-        "dec":           0.0,
-        "errorRadius":   0.0,
-        "snr":           0.0,
-        "far":           0.0,
+        "ra":            None,
+        "dec":           None,
+        "errorRadius":   None,
+        "snr":           None,
+        "far":           None,
         "latencyUs":     0,
-        "galLon":        0.0,
-        "galLat":        0.0,
-        "sunDistance":   0.0,
-        "moonDistance":  0.0,
+        "galLon":        None,
+        "galLat":        None,
+        "sunDistance":   None,
+        "moonDistance":  None,
         "fluence":       None,
         "dm":            None,
+        # IceCube signalness — a 0-1 probability that the event is
+        # astrophysical. NOT an SNR; kept in its own field so the two are
+        # never conflated again.
+        "signalness":    None,
         # FITS sky-localization URL — populated only for GW events (IGWN).
         # None means "no skymap URL present in this payload".
         "fitsUrl":       None,
@@ -107,10 +113,53 @@ def _make_event_id(event_type: str) -> str:
 
 
 def _safe_float(val: Any, default: float = 0.0) -> float:
+    """Coerce to float with a numeric default.
+
+    Only for values where a numeric default is genuinely correct. For SOURCE
+    measurements use _measured() instead — a missing measurement must not
+    become 0.0.
+    """
     try:
         return float(val)
     except (TypeError, ValueError):
         return default
+
+
+def _measured(val: Any) -> float | None:
+    """
+    Coerce a SOURCE-reported measurement to float, or None if absent/invalid.
+
+    None means UNKNOWN: the upstream notice did not report this quantity.
+
+    This exists because coercing a missing measurement to 0.0 produces values
+    that are indistinguishable from real ones — a missing position became the
+    valid coordinate (0, 0), a missing SNR became a real-looking 0. Never
+    substitute a numeric placeholder for an absent measurement.
+    """
+    if val is None:
+        return None
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(f) or math.isinf(f):
+        return None
+    return f
+
+
+def _positive_measured(val: Any) -> float | None:
+    """
+    _measured(), additionally rejecting non-positive values for quantities
+    where zero or negative is physically meaningless.
+
+    Applies to SNR (a detection significance), FAR (a rate — exactly 0 Hz
+    would mean "never a false alarm") and localization radius (0 would be a
+    perfectly known position).
+    """
+    f = _measured(val)
+    if f is None or f <= 0.0:
+        return None
+    return f
 
 
 def _valid_radec(ra: Any, dec: Any) -> bool:
@@ -250,8 +299,8 @@ def _chime_frb(raw: dict, event_type: str) -> dict:
     CHIME/FRB VOEvent-JSON schema.
     Key fields: tns_name, ra, dec, dm, snr, width_ms, detection_time
     """
-    ra  = _safe_float(raw.get("ra"))
-    dec = _safe_float(raw.get("dec"))
+    ra  = _measured(raw.get("ra"))
+    dec = _measured(raw.get("dec"))
     det_time = raw.get("detection_time") or raw.get("event_time") or _now_iso()
     gal_lon, gal_lat = _ra_dec_to_gal(ra, dec)
     sun_d, moon_d    = _sun_moon_distance(ra, dec, det_time)
@@ -261,15 +310,15 @@ def _chime_frb(raw: dict, event_type: str) -> dict:
         "detectionTime": det_time,
         "ra":            ra,
         "dec":           dec,
-        "errorRadius":   _safe_float(raw.get("loc_error")),
-        "snr":           _safe_float(raw.get("snr")),
-        "far":           _safe_float(raw.get("far")),
+        "errorRadius":   _positive_measured(raw.get("loc_error")),
+        "snr":           _positive_measured(raw.get("snr")),
+        "far":           _positive_measured(raw.get("far")),
         "latencyUs":     _latency_us(det_time),
         "galLon":        gal_lon,
         "galLat":        gal_lat,
         "sunDistance":   sun_d,
         "moonDistance":  moon_d,
-        "dm":            _safe_float(raw.get("dm")),
+        "dm":            _measured(raw.get("dm")),
         "fluence":       None,
     }
 
@@ -279,8 +328,8 @@ def _einstein_probe(raw: dict, event_type: str) -> dict:
     Einstein Probe WXT alert schema.
     Key fields: ra_obj, dec_obj, err_rad, snr, trigger_time, trigger_id
     """
-    ra  = _safe_float(raw.get("ra_obj",  raw.get("ra")))
-    dec = _safe_float(raw.get("dec_obj", raw.get("dec")))
+    ra  = _measured(raw.get("ra_obj",  raw.get("ra")))
+    dec = _measured(raw.get("dec_obj", raw.get("dec")))
     det_time = raw.get("trigger_time") or raw.get("t_start") or _now_iso()
     gal_lon, gal_lat = _ra_dec_to_gal(ra, dec)
     sun_d, moon_d    = _sun_moon_distance(ra, dec, det_time)
@@ -291,15 +340,15 @@ def _einstein_probe(raw: dict, event_type: str) -> dict:
         "detectionTime": det_time,
         "ra":            ra,
         "dec":           dec,
-        "errorRadius":   _safe_float(raw.get("err_rad", raw.get("loc_error"))),
-        "snr":           _safe_float(raw.get("image_snr", raw.get("snr"))),
-        "far":           _safe_float(raw.get("far")),
+        "errorRadius":   _positive_measured(raw.get("err_rad", raw.get("loc_error"))),
+        "snr":           _positive_measured(raw.get("image_snr", raw.get("snr"))),
+        "far":           _positive_measured(raw.get("far")),
         "latencyUs":     _latency_us(det_time),
         "galLon":        gal_lon,
         "galLat":        gal_lat,
         "sunDistance":   sun_d,
         "moonDistance":  moon_d,
-        "fluence":       _safe_float(raw.get("fluence")) or None,
+        "fluence":       _measured(raw.get("fluence")),
         "dm":            None,
     }
 
@@ -309,16 +358,18 @@ def _icecube(raw: dict, event_type: str) -> dict:
     IceCube GOLD/BRONZE and LVK-NuTrack alert schema.
     Key fields: ra, dec, ra_err, dec_err, signalness, far, event_dt
     """
-    ra  = _safe_float(raw.get("ra"))
-    dec = _safe_float(raw.get("dec"))
+    ra  = _measured(raw.get("ra"))
+    dec = _measured(raw.get("dec"))
     det_time  = raw.get("event_dt") or raw.get("time") or _now_iso()
     gal_lon, gal_lat = _ra_dec_to_gal(ra, dec)
     sun_d, moon_d    = _sun_moon_distance(ra, dec, det_time)
 
-    # IceCube uses separate ra_err / dec_err; use the larger for errorRadius
-    ra_err  = _safe_float(raw.get("ra_err",  raw.get("ra_uncertainty",  0.0)))
-    dec_err = _safe_float(raw.get("dec_err", raw.get("dec_uncertainty", 0.0)))
-    err_radius = max(ra_err, dec_err)
+    # IceCube uses separate ra_err / dec_err; use the larger for errorRadius.
+    # If neither is reported the uncertainty is UNKNOWN — not zero.
+    ra_err  = _positive_measured(raw.get("ra_err",  raw.get("ra_uncertainty")))
+    dec_err = _positive_measured(raw.get("dec_err", raw.get("dec_uncertainty")))
+    _errs = [e for e in (ra_err, dec_err) if e is not None]
+    err_radius = max(_errs) if _errs else None
 
     det_time  = raw.get("event_dt") or raw.get("time") or _now_iso()
     run_id    = raw.get("run_id",   "")
@@ -331,8 +382,14 @@ def _icecube(raw: dict, event_type: str) -> dict:
         "ra":            ra,
         "dec":           dec,
         "errorRadius":   err_radius,
-        "snr":           _safe_float(raw.get("signalness", raw.get("signal_trackness"))),
-        "far":           _safe_float(raw.get("far")),
+        # IceCube track alerts do not report a signal-to-noise ratio. This
+        # field previously held *signalness* — a 0-1 probability that the
+        # event is astrophysical — which is a different physical quantity with
+        # different units and is not comparable to the SNR of a GRB or GW.
+        # Storing it here made cross-messenger SNR comparisons meaningless.
+        "snr":           None,
+        "signalness":    _measured(raw.get("signalness", raw.get("signal_trackness"))),
+        "far":           _positive_measured(raw.get("far")),
         "latencyUs":     _latency_us(det_time),
         "galLon":        gal_lon,
         "galLat":        gal_lat,
@@ -362,8 +419,8 @@ def _igwn(raw: dict, event_type: str) -> dict:
     is set to None and no localization row will be written downstream.
     """
     event_block = raw.get("event", {}) or {}
-    ra  = _safe_float(event_block.get("ra",  raw.get("ra",  0.0)))
-    dec = _safe_float(event_block.get("dec", raw.get("dec", 0.0)))
+    ra  = _measured(event_block.get("ra",  raw.get("ra")))
+    dec = _measured(event_block.get("dec", raw.get("dec")))
     det_time = (
         event_block.get("time")
         or raw.get("time_created")
@@ -395,9 +452,9 @@ def _igwn(raw: dict, event_type: str) -> dict:
         "detectionTime": det_time,
         "ra":            ra,
         "dec":           dec,
-        "errorRadius":   _safe_float(event_block.get("error_radius", raw.get("area_90", 0.0))),
-        "snr":           _safe_float(event_block.get("snr",  raw.get("snr"))),
-        "far":           _safe_float(event_block.get("far",  raw.get("far"))),
+        "errorRadius":   _positive_measured(event_block.get("error_radius", raw.get("area_90"))),
+        "snr":           _positive_measured(event_block.get("snr",  raw.get("snr"))),
+        "far":           _positive_measured(event_block.get("far",  raw.get("far"))),
         "latencyUs":     _latency_us(det_time),
         "galLon":        gal_lon,
         "galLat":        gal_lat,
@@ -414,8 +471,8 @@ def _swift_bat(raw: dict, event_type: str) -> dict:
     Swift-BAT GUANO alert schema.
     Key fields: trigger_num, ra, dec, image_snr, image_significance, trigger_time
     """
-    ra  = _safe_float(raw.get("ra"))
-    dec = _safe_float(raw.get("dec"))
+    ra  = _measured(raw.get("ra"))
+    dec = _measured(raw.get("dec"))
     det_time  = raw.get("trigger_time") or raw.get("time") or _now_iso()
     gal_lon, gal_lat = _ra_dec_to_gal(ra, dec)
     sun_d, moon_d    = _sun_moon_distance(ra, dec, det_time)
@@ -427,23 +484,23 @@ def _swift_bat(raw: dict, event_type: str) -> dict:
         "detectionTime": det_time,
         "ra":            ra,
         "dec":           dec,
-        "errorRadius":   _safe_float(raw.get("loc_error", 3.0)),
-        "snr":           _safe_float(raw.get("image_snr", raw.get("snr"))),
-        "far":           _safe_float(raw.get("far")),
+        "errorRadius":   _positive_measured(raw.get("loc_error")),
+        "snr":           _positive_measured(raw.get("image_snr", raw.get("snr"))),
+        "far":           _positive_measured(raw.get("far")),
         "latencyUs":     _latency_us(det_time),
         "galLon":        gal_lon,
         "galLat":        gal_lat,
         "sunDistance":   sun_d,
         "moonDistance":  moon_d,
-        "fluence":       _safe_float(raw.get("fluence")) or None,
+        "fluence":       _measured(raw.get("fluence")),
         "dm":            None,
     }
 
 
 def _generic(raw: dict, event_type: str) -> dict:
     """Last-resort parser for unknown topics."""
-    ra  = _safe_float(raw.get("ra"))
-    dec = _safe_float(raw.get("dec"))
+    ra  = _measured(raw.get("ra"))
+    dec = _measured(raw.get("dec"))
     det_time = raw.get("time") or raw.get("detection_time") or _now_iso()
     gal_lon, gal_lat = _ra_dec_to_gal(ra, dec)
     sun_d, moon_d    = _sun_moon_distance(ra, dec, det_time)
@@ -453,9 +510,9 @@ def _generic(raw: dict, event_type: str) -> dict:
         "detectionTime": det_time,
         "ra":            ra,
         "dec":           dec,
-        "errorRadius":   _safe_float(raw.get("loc_error", raw.get("error_radius"))),
-        "snr":           _safe_float(raw.get("snr")),
-        "far":           _safe_float(raw.get("far")),
+        "errorRadius":   _positive_measured(raw.get("loc_error", raw.get("error_radius"))),
+        "snr":           _positive_measured(raw.get("snr")),
+        "far":           _positive_measured(raw.get("far")),
         "latencyUs":     _latency_us(det_time),
         "galLon":        gal_lon,
         "galLat":        gal_lat,

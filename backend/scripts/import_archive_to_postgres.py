@@ -38,11 +38,17 @@ except ImportError:
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_INPUT = PROJECT_ROOT / "historical_events_2026.json"
 
-# Placeholder values for NOT NULL numeric columns that GCN circulars don't
-# carry (we fill them with 0.0 so the row is accepted by the schema constraint;
-# the is_historical flag makes it clear these are archive-sourced records).
-NULL_FLOAT   = 0.0
-NULL_LATENCY = 0          # bigint latency_us
+# GCN circulars are free-text and do not carry structured numeric measurements.
+#
+# These were previously written as 0.0 "so the row is accepted by the schema
+# constraint" — but (0,0) is a *valid* sky position, so 279 archive rows ended
+# up claiming to sit at the celestial origin with SNR 0 and FAR 0, and nothing
+# downstream could tell them apart from real measurements.
+#
+# Migration 0011 made those columns nullable precisely so this importer can
+# record UNKNOWN honestly. Do not reintroduce a numeric placeholder here.
+NULL_FLOAT   = None
+NULL_LATENCY = 0          # bigint latency_us (still NOT NULL)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SQL

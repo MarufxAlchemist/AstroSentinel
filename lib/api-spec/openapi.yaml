@@ -209,19 +209,28 @@ components:
           description: ISO timestamp with microsecond precision
         ra:
           type: number
-          description: Right Ascension in degrees
+          nullable: true
+          description: OBSERVED Right Ascension in degrees (ICRS). null = position not reported by source.
         dec:
           type: number
-          description: Declination in degrees
+          nullable: true
+          description: OBSERVED Declination in degrees (ICRS). null = position not reported by source.
         errorRadius:
           type: number
-          description: Error radius in arcminutes
+          nullable: true
+          description: OBSERVED localization uncertainty in arcminutes. null = not reported. Semantics are source-defined.
         snr:
           type: number
-          description: Signal-to-noise ratio
+          nullable: true
+          description: OBSERVED signal-to-noise ratio. null = not reported (IceCube reports signalness instead).
         far:
           type: number
-          description: False alarm rate (Hz)
+          nullable: true
+          description: OBSERVED false alarm rate (Hz). null = not reported. Zero is unphysical and never stored.
+        signalness:
+          type: number
+          nullable: true
+          description: OBSERVED IceCube signalness - probability in [0,1] that the event is astrophysical. NOT an SNR.
         fluence:
           type: number
           nullable: true

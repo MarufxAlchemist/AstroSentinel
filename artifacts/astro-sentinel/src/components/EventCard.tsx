@@ -1,6 +1,6 @@
 import { Link } from "wouter";
 import { AstroEvent } from "@workspace/api-client-react/src/generated/api.schemas";
-import { formatMicrosecondDate, formatLatency } from "@/lib/formatters";
+import { formatMicrosecondDate, formatLatency, formatMeasured } from "@/lib/formatters";
 
 interface EventCardProps {
   event: AstroEvent;
@@ -40,9 +40,9 @@ export function EventCard({ event, animate = false }: EventCardProps) {
           {event.eventId}
         </div>
         <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] font-mono text-muted-foreground">
-          <div><span className="text-foreground/60">RA </span>{event.ra.toFixed(1)}°</div>
-          <div><span className="text-foreground/60">Dec </span>{event.dec.toFixed(1)}°</div>
-          <div><span className="text-foreground/60">SNR </span>{event.snr.toFixed(1)}σ</div>
+          <div><span className="text-foreground/60">RA </span>{formatMeasured(event.ra, 1, "°")}</div>
+          <div><span className="text-foreground/60">Dec </span>{formatMeasured(event.dec, 1, "°")}</div>
+          <div><span className="text-foreground/60">SNR </span>{formatMeasured(event.snr, 1, "σ")}</div>
           <div><span className="text-foreground/60">T </span>{time} UTC</div>
         </div>
       </div>

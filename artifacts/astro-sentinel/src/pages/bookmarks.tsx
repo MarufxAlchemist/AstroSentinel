@@ -11,7 +11,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EventBadge } from "@/components/EventBadge";
 import { useAuth } from "@/lib/AuthContext";
-import { formatMicrosecondDate } from "@/lib/formatters";
+import { formatMicrosecondDate, formatMeasured } from "@/lib/formatters";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -115,10 +115,10 @@ function BookmarkCard({
             </span>
             <span className="flex items-center gap-1">
               <Activity className="w-3 h-3" />
-              SNR {ev.snr.toFixed(1)}σ
+              SNR {formatMeasured(ev.snr, 1, "σ")}
             </span>
             <span className="font-mono">
-              RA {ev.ra.toFixed(2)}° · Dec {ev.dec.toFixed(2)}°
+              RA {formatMeasured(ev.ra, 2, "°")} · Dec {formatMeasured(ev.dec, 2, "°")}
             </span>
           </div>
 

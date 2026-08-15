@@ -1,6 +1,7 @@
 import {
   pgSchema,
   bigserial,
+  bigint,
   uuid,
   text,
   boolean,
@@ -70,13 +71,19 @@ export const events = coreSchema.table("events", {
   eventId: text("event_id").notNull(),
   eventType: text("event_type").notNull(),
   detectionTime: timestamp("detection_time", { withTimezone: true }).notNull(),
-  ra: doublePrecision("ra").notNull(),
-  dec: doublePrecision("dec").notNull(),
+  // OBSERVED source measurements. NULL means the upstream notice did not
+  // report the quantity — never zero. (0,0) is a valid sky position, so a
+  // placeholder here is indistinguishable from a real measurement; see
+  // migration 0011.
+  ra: doublePrecision("ra"),
+  dec: doublePrecision("dec"),
   // skyPosition computed via trigger in migration: ST_MakePoint(ra, dec)::geography
   skyPosition: geographyPoint("sky_position"),
-  errorRadius: doublePrecision("error_radius").notNull(),
-  snr: doublePrecision("snr").notNull(),
-  far: doublePrecision("far").notNull(),
+  errorRadius: doublePrecision("error_radius"),
+  snr: doublePrecision("snr"),
+  far: doublePrecision("far"),
+  /** IceCube signalness: P(astrophysical) in [0,1]. NOT an SNR. */
+  signalness: doublePrecision("signalness"),
   // GRB-specific
   fluence: doublePrecision("fluence"),
   fluenceBand: text("fluence_band"),
@@ -397,3 +404,47 @@ export const aiCorrelationAnalysisRelations = relations(aiCorrelationAnalysis, (
 export const aiScientificSummariesRelations = relations(aiScientificSummaries, ({ one }) => ({
   event: one(events, { fields: [aiScientificSummaries.eventId], references: [events.id] }),
 }));
+
+// ─── core.event_value_provenance ─────────────────────────────────────────────
+//
+// Per-value scientific audit trail (migration 0012). One row per
+// (event, parameter) for any quantity that was not read straight off the
+// source notice — DERIVED, INFERRED, or CATALOG.
+//
+// Kept as a side table rather than widening core.events: provenance is sparse
+// and append-mostly, and only a few parameters per event carry it.
+
+export const eventValueProvenance = coreSchema.table(
+  "event_value_provenance",
+  {
+    id:      bigserial("id", { mode: "bigint" }).primaryKey(),
+    eventId: bigint("event_id", { mode: "bigint" }).notNull()
+               .references(() => events.id, { onDelete: "cascade" }),
+    /** Column on core.events this describes, e.g. "sun_distance". */
+    parameter:    text("parameter").notNull(),
+    /** OBSERVED | DERIVED | INFERRED | CATALOG | UNKNOWN */
+    source:       text("source").notNull(),
+    /** MEASURED | CALCULATED | MODEL_DEPENDENT | LIMITED | UNKNOWN */
+    confidence:   text("confidence"),
+    /** VALID | SUSPICIOUS | INVALID | MISSING */
+    quality:      text("quality").notNull().default("VALID"),
+    unit:         text("unit"),
+    uncertainty:  doublePrecision("uncertainty"),
+    /** How it was produced, e.g. "astropy GCRS separation via get_body". */
+    method:       text("method"),
+    /** Source fields that fed the calculation. */
+    inputFields:  text("input_fields").array().notNull().default([]),
+    /** Library/version for reproducibility, e.g. "astropy 6.1.4". */
+    software:     text("software"),
+    /** Model/cosmology assumptions. Empty for purely geometric results. */
+    assumptions:  text("assumptions").array().notNull().default([]),
+    calculatedAt: timestamp("calculated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("event_value_provenance_event_idx").on(t.eventId),
+    index("event_value_provenance_param_idx").on(t.parameter, t.source),
+  ],
+);
+
+export type EventValueProvenance = typeof eventValueProvenance.$inferSelect;
+export type InsertEventValueProvenance = typeof eventValueProvenance.$inferInsert;

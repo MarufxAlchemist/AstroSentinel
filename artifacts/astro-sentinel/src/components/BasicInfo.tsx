@@ -1,5 +1,5 @@
 import type { AstroEvent } from "@workspace/api-client-react";
-import { formatMicrosecondDate, formatLatency } from "@/lib/formatters";
+import { formatMicrosecondDate, formatLatency, formatMeasured, formatExp } from "@/lib/formatters";
 
 interface Props { event: AstroEvent; }
 
@@ -14,8 +14,8 @@ function Row({ label, value }: { label: string; value: string }) {
 
 /** Build real external URLs from the selected event. */
 export function buildExternalLinks(event: AstroEvent) {
-  const ra  = event.ra.toFixed(6);
-  const dec = event.dec.toFixed(6);
+  const ra  = formatMeasured(event.ra, 6);
+  const dec = formatMeasured(event.dec, 6);
   const fov = 2; // degrees – reasonable default for all event types
 
   return [
@@ -61,13 +61,13 @@ export function BasicInfo({ event }: Props) {
         <Row label="Date [UTC]" value={formatMicrosecondDate(event.detectionTime).slice(0, 19).replace("T", " ")} />
         <Row label="Observatory" value={event.observatory} />
         <Row label="Instrument" value={`${event.observatory}/${event.eventType}`} />
-        <Row label="RA [deg]" value={event.ra.toFixed(4) + "°"} />
-        <Row label="Dec [deg]" value={event.dec.toFixed(4) + "°"} />
-        <Row label="Err radius" value={event.errorRadius.toFixed(2) + "'"} />
+        <Row label="RA [deg]" value={formatMeasured(event.ra, 4, "°")} />
+        <Row label="Dec [deg]" value={formatMeasured(event.dec, 4, "°")} />
+        <Row label="Err radius" value={formatMeasured(event.errorRadius, 2, "'")} />
         <Row label="Gal. lon" value={formatDerived(event.galLon, 2)} />
         <Row label="Gal. lat" value={formatDerived(event.galLat, 2)} />
-        <Row label="SNR" value={event.snr.toFixed(2) + " σ"} />
-        <Row label="FAR" value={event.far.toExponential(3) + " Hz"} />
+        <Row label="SNR" value={formatMeasured(event.snr, 2, " σ")} />
+        <Row label="FAR" value={formatExp(event.far, 3, " Hz")} />
         <Row label="Sun dist." value={formatDerived(event.sunDistance, 1)} />
         <Row label="Moon dist." value={formatDerived(event.moonDistance, 1)} />
         <Row label="Latency" value={formatLatency(event.latencyUs)} />

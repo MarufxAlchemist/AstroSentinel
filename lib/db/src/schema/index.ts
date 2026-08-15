@@ -64,6 +64,7 @@ export {
   aiCorrelationAnalysisRelations,
   aiScientificSummaries,
   aiScientificSummariesRelations,
+  eventValueProvenance,
 } from "./events.js";
 export type {
   AstroEvent,
@@ -84,6 +85,8 @@ export type {
   InsertAiCorrelationAnalysis,
   EventCorrelation,
   InsertEventCorrelation,
+  EventValueProvenance,
+  InsertEventValueProvenance,
 } from "./events.js";
 export type {
   AiScientificSummary,

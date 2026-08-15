@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import type { AstroEvent } from "@workspace/api-client-react";
 import { Copy, Check, ExternalLink } from "lucide-react";
-import { formatMicrosecondDate } from "@/lib/formatters";
+import { formatMicrosecondDate, formatMeasured } from "@/lib/formatters";
 import { buildExternalLinks } from "./BasicInfo";
 
 interface Props {
@@ -122,8 +122,8 @@ export function AladinMetadataPanel({ event, localization }: Props) {
           Coordinates
         </h3>
         <div className="space-y-0">
-          <CopyableRow label="RA" value={`${event.ra.toFixed(3)}°`} copyValue={event.ra.toFixed(6)} />
-          <CopyableRow label="DEC" value={`${event.dec.toFixed(3)}°`} copyValue={event.dec.toFixed(6)} />
+          <CopyableRow label="RA" value={formatMeasured(event.ra, 3, "°")} copyValue={formatMeasured(event.ra, 6)} />
+          <CopyableRow label="DEC" value={formatMeasured(event.dec, 3, "°")} copyValue={formatMeasured(event.dec, 6)} />
           <Row label="Galactic Lon" value={formatDerived(event.galLon, 1)} />
           <Row label="Galactic Lat" value={formatDerived(event.galLat, 1)} />
         </div>
