@@ -62,7 +62,12 @@ Collaboration features have backend routing wired but minimal frontend integrati
 |---|---|---|
 | `byObservatory` always `[]` | Medium | `artifacts/api-server/src/routes/events.ts` |
 | ~~`sun_distance` / `moon_distance` hardcoded to `90°`~~ — **misdiagnosis.** Astropy calc existed but (a) used mismatched ICRS/GCRS frames, wrong by up to ~150°, and (b) fell back to a fabricated `90.0`. Both fixed; all 304 rows recomputed. | Fixed 2026-08-14 | `backend/app/gcn/normalizer.py` |
-| `_safe_float(..., 0.0)` coerces missing **source** measurements (snr, errorRadius) to `0.0` | Medium | `backend/app/gcn/normalizer.py` |
+| ~~`_safe_float(..., 0.0)` coerces missing **source** measurements to `0.0`~~ — 92% of the archive claimed to sit at RA 0, Dec 0. Root cause was `import_archive_to_postgres.py` writing `NULL_FLOAT = 0.0` *because the columns were NOT NULL*. | Fixed 2026-08-16 | `normalizer.py`, migrations 0011/0012 |
+| ~~IceCube **signalness** (probability 0–1) stored in the **`snr`** column (significance in σ)~~ — different quantities, made cross-messenger SNR comparison meaningless | Fixed 2026-08-16 | `normalizer.py`, `core.events.signalness` |
+| ~~`core.event_correlations` declared in schema and written by `repository.ts` but **never created by any migration**~~ — `saveCorrelation()` swallowed every failure | Fixed 2026-08-16 | migration 0012 |
+| ~~Correlation scorer coerced `null` position to `0`, yielding a perfect 0° spatial match~~ — could manufacture multi-messenger associations | Fixed 2026-08-16 | `correlationEngine/scorer.ts` |
+| ~~FAR of 0 rendered as "1 per Infinity years"~~ — a 1/0 artifact shown as a scientific statement | Fixed 2026-08-16 | `formatters.ts` |
+| 279 archive events remain scientifically empty (GCN circulars are free text; measurements were never extracted) | Medium | `core.events` where `source='gcn_archive'` |
 | `eventIngestion.ts` generates **random** sun/moon distances (`randomBetween(30,150)`) | Low (dead stub) | `artifacts/api-server/src/lib/eventIngestion.ts` |
 | `kafka_connected` in heartbeat always `true` even when disconnected | Low | Python WS manager |
 | `eventIngestion.ts` is a no-op stub but still imported | Low | `artifacts/api-server/src/lib/eventIngestion.ts` |

@@ -4,6 +4,60 @@ AI coding session log. Newest entries at top. Never rewrite previous entries.
 
 ---
 
+## 2026-08-16 — Scientific Integrity Phase 2: source measurements + provenance
+
+### Root cause confirmed in writing
+`backend/scripts/import_archive_to_postgres.py:44` contained:
+
+```python
+NULL_FLOAT = 0.0
+# Placeholder floats for NOT NULL numeric columns
+"ra": NULL_FLOAT, "dec": NULL_FLOAT, "snr": NULL_FLOAT, ...
+```
+
+The importer never attempted to extract measurements — it wrote zeros *because the columns were NOT NULL*, and the comment says so. This is the same mechanism as migration 0010: **the constraint caused the fabrication.** 279 of 304 rows (92%) carried `ra=0, dec=0, snr=0, far=0, error_radius=0` simultaneously. All of them came from `source='gcn_archive'`; live `kafka` and `bootstrap` rows were unaffected.
+
+Because (0,0) is a *valid* celestial coordinate, nothing downstream flagged it — the sky map plotted 279 events at the origin and the correlation engine saw them as perfectly coincident.
+
+### Migrations (applied to live DB)
+- `0011_nullable_source_measurements.sql` — dropped NOT NULL on `ra`, `dec`, `error_radius`, `snr`, `far`; retired placeholders field-by-field (not a blanket rule: some CHIME FRB rows have a genuine position but fabricated FAR); and **decontaminated the derived geometry Phase 1 had computed from the fabricated (0,0) positions** — derived-from-unknown must itself be UNKNOWN.
+- `0012_signalness_and_provenance.sql` — added `core.events.signalness`; CHECK constraints so a fabricated value now fails at write time (`ra` range, `dec` range, `snr>0`, `far>0`, `error_radius>0`, sun/moon in [0,180], and derived-requires-position); created `core.event_correlations` (declared in the Drizzle schema and written by `repository.ts`, but **no migration ever created it** — `saveCorrelation()` swallows errors, so every persist silently failed); created `core.event_value_provenance`.
+
+Post-state: 304 rows — 25 with a real position, 279 honestly UNKNOWN, 0 at the origin, 0 unphysical, 0 contaminated derived values.
+
+### Signalness is not SNR
+`normalizer.py` wrote IceCube **signalness** (a probability in [0,1] that the event is astrophysical) into the **`snr`** column (a significance in sigma). Different quantities, different units, not comparable — this made any cross-messenger SNR comparison meaningless. Signalness now has its own column with a `[0,1]` CHECK; `snr` is NULL for IceCube.
+
+### Normalizer
+- Added `_measured()` (absent -> None) and `_positive_measured()` (also rejects <= 0, for SNR/FAR/radius where zero is physically meaningless). 31 call sites converted off `_safe_float`.
+- The `base` defaults dict — used precisely when a parser *raises* — was seeding `ra/dec/snr/far = 0.0`. Now None.
+- Removed a hardcoded `loc_error` default of `3.0` arcmin.
+- IceCube `max(ra_err, dec_err)` no longer collapses to 0 when neither is reported.
+- `import_archive_to_postgres.py`: `NULL_FLOAT = None`.
+
+### Spurious-correlation guard
+`science/correlationEngine/scorer.ts` called `angularSeparationDeg(primary.ra, ...)` unguarded. JavaScript coerces `null` to `0` inside the haversine, yielding separation `0°` — a *perfect* spatial match — which would manufacture multi-messenger "associations" between events that simply have no position. `scorePair()` now returns a zero score with explicit reasoning when either position is unknown.
+
+### Provenance
+`core.event_value_provenance` records, per (event, parameter): source classification, confidence, quality, unit, uncertainty, method, input fields, software version, and assumptions. Populated for all 100 derived values across the 25 positioned events (`astropy 6.1.4`, inputs `ra`/`dec`/`detection_time`).
+
+### API / frontend
+- `ra`, `dec`, `errorRadius`, `snr`, `far` nullable through OpenAPI, zod, generated types, WS types; `signalness` added.
+- New formatters: `formatMeasured()`, `formatExp()`, `formatFarInterval()`. The last replaces an unguarded `1 / far` that rendered **"1 per Infinity years"** — a division-by-zero artifact displayed as a scientific statement.
+- `SkyMap` skips position-less events rather than drawing them at (0,0).
+- `generateSummary()` narrative no longer asserts a position it does not have.
+
+### Tests
+`backend/tests/` — **58 passing** (28 Phase 1 + 30 Phase 2). Covers UNKNOWN-not-zero, parse-failure behaviour, FAR-of-zero, and the signalness/SNR separation.
+
+### Known remaining
+- Provenance is populated for derived sky geometry only; the ingestion path does not yet write provenance rows for new events.
+- No per-event validators for GRB/GW/FRB/NU, no uncertainty propagation, no observability/airmass, no quality score (spec sections 9-36).
+- `eventIngestion.ts` still contains `randomBetween(30,150)` for sun/moon (documented dead stub).
+- The 279 archive events remain scientifically empty — GCN circulars are free text; recovering their measurements would need a text-extraction pass.
+
+---
+
 ## 2026-08-14 — Scientific Integrity Phase 1: sky-geometry provenance
 
 ### Critical fix — Sun/Moon separations were wrong by up to ~150°
