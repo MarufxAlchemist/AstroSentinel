@@ -306,30 +306,64 @@ export async function dispatchForEvent(
       `[notifications] Deduplication engine approved email`,
     );
 
-    // ── 5c. AI Scientific Summary Engine (Phase 5.6) ──────────────────────
+    // ── 5c. AI Scientific Summary Engine (Phase 5.6, guarded in Phase 7) ──
+    //
+    // The context is built by the science layer from measured values only,
+    // with every unknown stated as unknown. It previously coerced absent
+    // measurements to 0 — presenting an unlocalized event as sitting at
+    // (0, 0) and an event with no false-alarm rate as having FAR = 0 Hz,
+    // i.e. infinite significance. See science/aiGuard.ts.
     const { generateSummary } = await import("../science/summaryEngine/index.js");
-    
-    // We only pass the fields relevant for scientific evaluation
-    const eventMetadata = {
-      eventId:       String(event["eventId"]       ?? ""),
-      eventType:     String(event["eventType"]     ?? ""),
-      observatory:   String(event["observatory"]   ?? ""),
-      detectionTime: String(event["detectionTime"] ?? ""),
-      snr:           Number(event["snr"]           ?? 0),
-      far:           Number(event["far"]           ?? 0),
-      ra:            Number(event["ra"]            ?? 0),
-      dec:           Number(event["dec"]           ?? 0),
-      errorRadius:   Number(event["errorRadius"]   ?? 0),
-      priorityLevel: result.priority,
-      priorityScore: result.score,
-    };
-    
-    // Non-blocking timeout-safe summary generation
-    const aiSummary = await generateSummary(
-      event["id"] as number | string,
-      eventMetadata,
-      correlationResult as unknown as Record<string, unknown>
-    );
+    const { buildAiContext, verifyAiOutput } = await import("../science/aiGuard.js");
+
+    const aiContext = await buildAiContext(event);
+
+    let aiSummary: Awaited<ReturnType<typeof generateSummary>> | null = null;
+    if (!aiContext) {
+      // Skipping is the correct degraded mode: the email template already
+      // falls back to rendering the raw data, which is honest. Generating a
+      // confident paragraph from unvalidated input is not.
+      logger.warn(
+        { eventId: event["eventId"] },
+        "[notifications] AI summary skipped — validated context unavailable",
+      );
+    } else {
+      const eventMetadata = {
+        ...aiContext,
+        priorityLevel: result.priority,
+        priorityScore: result.score,
+      };
+
+      // Non-blocking timeout-safe summary generation
+      aiSummary = await generateSummary(
+        event["id"] as number | string,
+        eventMetadata,
+        correlationResult as unknown as Record<string, unknown>
+      );
+
+      // Instructions are not a guarantee: screen the result for numbers that
+      // were never supplied. A failed screen is not a pass.
+      if (aiSummary) {
+        const verification = await verifyAiOutput(eventMetadata, aiSummary);
+        if (verification && !verification.trusted) {
+          logger.warn(
+            {
+              eventId: event["eventId"],
+              unsupported: verification.unsupported.map((u) => u.text),
+            },
+            "[notifications] AI summary quotes values absent from its context — " +
+              "withholding it from the email",
+          );
+          aiSummary = null;
+        } else if (!verification) {
+          logger.warn(
+            { eventId: event["eventId"] },
+            "[notifications] AI output could not be screened; treating as unverified",
+          );
+          aiSummary = null;
+        }
+      }
+    }
 
     // ── 7. Enqueue one job per recipient ──────────────────────────────────
     const provider = createEmailProvider();

@@ -80,6 +80,17 @@ export const events = coreSchema.table("events", {
   // skyPosition computed via trigger in migration: ST_MakePoint(ra, dec)::geography
   skyPosition: geographyPoint("sky_position"),
   errorRadius: doublePrecision("error_radius"),
+  /**
+   * What `errorRadius` contains — 1SIGMA_1D | 1SIGMA_2D | 50_2D | 68_2D |
+   * 90_2D | 95_2D. NULL means the source did not state it, which is NOT the
+   * same as 1-sigma: for a 2-D Gaussian a 90% containment radius is 2.15x the
+   * 1-sigma radius, so the convention is never assumed. See migration 0014.
+   */
+  errorRadiusContainment: text("error_radius_containment"),
+  /** 50% credible sky area [deg^2]. An area — not a radius. */
+  area50Deg2: doublePrecision("area_50_deg2"),
+  /** 90% credible sky area [deg^2]. An area — not a radius. */
+  area90Deg2: doublePrecision("area_90_deg2"),
   snr: doublePrecision("snr"),
   far: doublePrecision("far"),
   /** IceCube signalness: P(astrophysical) in [0,1]. NOT an SNR. */
@@ -94,6 +105,8 @@ export const events = coreSchema.table("events", {
   // GW-specific
   chirpMass: doublePrecision("chirp_mass"),
   luminosityDistance: doublePrecision("luminosity_distance"),
+  /** 1-sigma uncertainty on luminosityDistance [Mpc]. GW posteriors are broad. */
+  luminosityDistanceError: doublePrecision("luminosity_distance_error"),
   // Celestial geometry
   // DERIVED sky geometry — computed from (ra, dec, detectionTime), not measured.
   // NULL means "could not be responsibly derived", never zero or a typical value.
@@ -102,6 +115,36 @@ export const events = coreSchema.table("events", {
   sunDistance: doublePrecision("sun_distance"),
   moonDistance: doublePrecision("moon_distance"),
   redshift: doublePrecision("redshift"),
+  /** 1-sigma uncertainty on redshift, propagated into rest-frame quantities. */
+  redshiftError: doublePrecision("redshift_error"),
+  // ── Derived science (Phase 5) ────────────────────────────────────────────
+  /**
+   * Derived quantities with their method, inputs, assumptions, propagated
+   * uncertainty and provenance: rest-frame T90/Epeak, luminosity distance,
+   * band-limited E_iso (stamped with the cosmology used), credible-region
+   * geometry and observability. An underivable quantity is stored as UNKNOWN
+   * with the reason it could not be derived — never omitted, never guessed.
+   */
+  derived: jsonb("derived").$type<Record<string, unknown> | null>(),
+  // ── Scientific validation (Phase 3) ──────────────────────────────────────
+  /** Validation report: {status, worstLevel, counts, diagnostics[]}. */
+  validation: jsonb("validation").$type<Record<string, unknown> | null>(),
+  /** Transparent quality assessment with per-component deductions. */
+  quality: jsonb("quality").$type<Record<string, unknown> | null>(),
+  /** Overall quality 0-100, denormalised for indexing/sorting. */
+  qualityScore: smallint("quality_score"),
+  /** PASS | WARNING | FAIL, denormalised for filtering. */
+  validationStatus: text("validation_status"),
+  // ── Research interest (Phase 7, spec section 44) ──────────────────────────
+  /**
+   * Per-rule contributions with rationales, plus quantities that could not be
+   * assessed. A triage heuristic for ordering a queue — NOT a measured
+   * property of the event, and deliberately distinct from `quality` (is the
+   * data trustworthy?) and notification priority (is it urgent?).
+   */
+  researchInterest: jsonb("research_interest").$type<Record<string, unknown> | null>(),
+  /** 0-100 research interest, denormalised for sorting. */
+  interestScore: smallint("interest_score"),
   // System fields
   latencyUs: bigserial("latency_us", { mode: "bigint" }).notNull(),
   sourceCatalogId: text("source_catalog_id"),
@@ -448,3 +491,51 @@ export const eventValueProvenance = coreSchema.table(
 
 export type EventValueProvenance = typeof eventValueProvenance.$inferSelect;
 export type InsertEventValueProvenance = typeof eventValueProvenance.$inferInsert;
+
+
+// ─── core.event_revisions ────────────────────────────────────────────────────
+//
+// Append-only history of every notice received for an event (Phase 6, spec
+// sections 27-28).
+//
+// Revisions were previously applied by an UPSERT that overwrote core.events in
+// place, destroying the prior scientific state: a localization that moved 40
+// degrees between notices left no trace. This table records each notice's
+// snapshot plus the computed delta against its predecessor, so the change is
+// visible rather than silently applied.
+//
+// Rows are never updated — a correction arrives as a new revision.
+
+export const eventRevisions = coreSchema.table(
+  "event_revisions",
+  {
+    id:            bigserial("id", { mode: "bigint" }).primaryKey(),
+    eventPk:       bigint("event_pk", { mode: "bigint" })
+                     .notNull()
+                     .references(() => events.id, { onDelete: "cascade" }),
+    /** GCN string id, denormalised so history is queryable without a join. */
+    eventId:       text("event_id").notNull(),
+    /** 0 for the first notice, then monotonically increasing. */
+    revisionIndex: integer("revision_index").notNull(),
+    /** PRELIMINARY | INITIAL | UPDATE | RETRACTION, as reported. */
+    alertType:     text("alert_type"),
+    lifecycle:     text("lifecycle"),
+    isRetraction:  boolean("is_retraction").notNull().default(false),
+    /** Scientific state per this notice. A missing key means UNKNOWN. */
+    snapshot:      jsonb("snapshot").$type<Record<string, unknown>>().notNull(),
+    /** compare_revisions() output vs the previous revision; null on the first. */
+    delta:         jsonb("delta").$type<Record<string, unknown> | null>(),
+    /** NONE | ROUTINE | NOTABLE | CRITICAL. */
+    significance:  text("significance"),
+    receivedAt:    timestamp("received_at", { withTimezone: true })
+                     .notNull()
+                     .defaultNow(),
+  },
+  (t) => [
+    index("event_revisions_event_id_received_idx").on(t.eventId, t.receivedAt),
+    index("event_revisions_significance_idx").on(t.significance, t.receivedAt),
+  ],
+);
+
+export type EventRevision = typeof eventRevisions.$inferSelect;
+export type InsertEventRevision = typeof eventRevisions.$inferInsert;

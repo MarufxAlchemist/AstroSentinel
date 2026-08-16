@@ -91,6 +91,152 @@ export interface AstroEvent {
   alertType?: string | null;
   /** IceCube classification tier */
   classificationTier?: AstroEventClassificationTier;
+  /** Scientific validation report (Phase 3). null/absent = not assessed. */
+  validation?: {
+    status: 'PASS' | 'WARNING' | 'FAIL' | 'UNKNOWN';
+    worstLevel: string | null;
+    counts: Record<string, number>;
+    diagnostics: {
+      level: 'INFO' | 'NOTICE' | 'WARNING' | 'ERROR' | 'CRITICAL';
+      code: string;
+      field: string | null;
+      message: string;
+      value?: unknown;
+    }[];
+  } | null;
+  /** Transparent quality assessment with per-component deductions. */
+  quality?: {
+    overall: number;
+    grade: string;
+    status: string;
+    scoreCapped?: boolean;
+    components: Record<string, {
+      score: number | null; grade: string; weight: number; applicable?: boolean;
+      deductions: { code: string; level: string; points: number; reason: string }[];
+    }>;
+    effectiveWeight?: number;
+    rubric?: Record<string, string>;
+  } | null;
+  qualityScore?: number | null;
+  validationStatus?: string | null;
+
+  // ── Phase 5: localization semantics and derived science ──────────────────
+
+  /**
+   * What `errorRadius` contains. Absent/null means the source did not state
+   * it — NOT that it is 1-sigma. For a 2-D Gaussian a 90% containment radius
+   * is 2.15x the 1-sigma radius, so the UI must never label an unqualified
+   * radius with a confidence level (spec section 23).
+   */
+  errorRadiusContainment?: ContainmentConvention | null;
+  /** 50% credible sky area [deg^2] — an area, not a radius. */
+  area50Deg2?: number | null;
+  /** 90% credible sky area [deg^2] — an area, not a radius. */
+  area90Deg2?: number | null;
+  /** 1-sigma uncertainty on luminosityDistance [Mpc]. */
+  luminosityDistanceError?: number | null;
+  redshift?: number | null;
+  /** 1-sigma uncertainty on redshift. */
+  redshiftError?: number | null;
+  /** Derived quantities, each with method, assumptions and provenance. */
+  derived?: DerivedScience | null;
+  /**
+   * Research interest (spec section 44) — how worth STUDYING the event is.
+   * Deliberately distinct from `quality` (is the data trustworthy?) and from
+   * notification priority (is it urgent?). A triage heuristic, not a measured
+   * property of the event.
+   */
+  researchInterest?: ResearchInterest | null;
+  /** 0-100 research interest, denormalised for sorting. */
+  interestScore?: number | null;
+}
+
+export interface ResearchInterest {
+  score: number;
+  /** UNASSESSED means no rule applied — NOT that the event is uninteresting. */
+  band: 'HIGH' | 'MODERATE' | 'LOW' | 'MINIMAL' | 'UNASSESSED';
+  contributions: { rule: string; points: number; reason: string }[];
+  /** Quantities that could not be assessed, so a low score is a lower bound. */
+  unassessed: string[];
+  retracted?: boolean;
+  maxScore?: number;
+  note: string;
+  disclaimer: string;
+}
+
+/** The six localization containment conventions recognised by the pipeline. */
+export type ContainmentConvention =
+  | '1SIGMA_1D' | '1SIGMA_2D' | '50_2D' | '68_2D' | '90_2D' | '95_2D';
+
+/**
+ * One derived quantity. `value === null` means UNKNOWN, and `note` carries the
+ * reason it could not be derived — the UI renders that reason rather than a
+ * blank or a zero (spec section 5).
+ */
+export interface DerivedQuantity {
+  value: number | null;
+  unit: string | null;
+  canonical?: number | null;
+  canonicalUnit?: string | null;
+  dimension?: string | null;
+  provenance: 'OBSERVED' | 'DERIVED' | 'INFERRED' | 'CATALOG' | 'UNKNOWN';
+  /** 1-sigma uncertainty in the same unit as `value`, when propagable. */
+  sigma?: number | null;
+  uncertaintyKnown?: boolean;
+  interpretable?: boolean;
+  /** The formula used, e.g. "T90_rest = T90_obs / (1 + z)". */
+  method?: string | null;
+  /** Cosmology, isotropy, independence — stated, never hidden. */
+  assumptions?: string[];
+  inputs?: Record<string, unknown>;
+  /** What would be needed to derive this, when it is UNKNOWN. */
+  requires?: string[];
+  note?: string | null;
+}
+
+export interface CosmologyStamp {
+  name: string;
+  H0: number;
+  Om0: number;
+  flat: boolean;
+  reference: string;
+  available: boolean;
+  units?: Record<string, string>;
+  reason?: string;
+}
+
+export interface DerivedScience {
+  restFrame?: { t90Rest?: DerivedQuantity; epeakRest?: DerivedQuantity };
+  cosmological?: {
+    cosmology: CosmologyStamp;
+    luminosityDistance?: DerivedQuantity;
+    lookbackTime?: DerivedQuantity;
+    /** Band-limited — NOT the bolometric E_iso of the literature. */
+    eIsoBand?: DerivedQuantity;
+  };
+  localization?: {
+    reported?: {
+      radiusArcmin: number | null;
+      radiusDeg: number | null;
+      containment: string | null;
+      containmentStated: boolean;
+      note?: string | null;
+    };
+    area50Deg2?: DerivedQuantity;
+    area90Deg2?: DerivedQuantity;
+  };
+  observability?: {
+    available: boolean;
+    site: { name: string; latDeg: number; lonDeg: number; elevM: number } | null;
+    atTime: string | null;
+    altitudeDeg: number | null;
+    azimuthDeg: number | null;
+    airmass: number | null;
+    aboveHorizon: boolean | null;
+    reason: string | null;
+    note: string | null;
+    provenance: string;
+  };
 }
 
 export interface EventListResponse {

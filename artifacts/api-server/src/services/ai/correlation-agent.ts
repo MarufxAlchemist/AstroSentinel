@@ -14,15 +14,18 @@ export interface PrimaryEvent {
   eventType: string;
   observatory: string;
   detectionTime: string;
-  ra: number;
-  dec: number;
-  errorRadius: number;
-  snr: number;
-  far: number;
-  galLat: number;
-  galLon: number;
-  sunDistance: number;
-  moonDistance: number;
+  // null means UNKNOWN — the notice did not report it, or it could not be
+  // derived. The LLM must see the absence rather than a fabricated stand-in,
+  // so it cannot reason from a number nobody measured (spec section 42).
+  ra: number | null;
+  dec: number | null;
+  errorRadius: number | null;
+  snr: number | null;
+  far: number | null;
+  galLat: number | null;
+  galLon: number | null;
+  sunDistance: number | null;
+  moonDistance: number | null;
   fluence?: number | null;
   dm?: number | null;
   t90?: number | null;

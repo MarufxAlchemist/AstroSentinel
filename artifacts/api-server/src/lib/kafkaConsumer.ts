@@ -40,7 +40,7 @@
  */
 
 import { WebSocket } from "ws";
-import { sql } from "drizzle-orm";
+import { sql, eq } from "drizzle-orm";
 import { db, eventsTable } from "@workspace/db";
 import { eventLocalizations } from "@workspace/db";
 
@@ -50,6 +50,7 @@ import type { Lifecycle } from "./alertFilter";
 import { recordReceived, recordAccepted, recordRejected } from "./filterReport";
 import { logger } from "./logger";
 import { dispatchForEvent } from "../notifications/notificationService";
+import { recordRevision } from "./revisionRecorder";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -102,6 +103,87 @@ function _safeEventType(raw: string): "GRB" | "GW" | "FRB" | "NU" {
 function _safeFloat(v: unknown, fallback = 0): number {
   const n = Number(v);
   return isFinite(n) ? n : fallback;
+}
+
+/**
+ * OBSERVED measurement from the normalizer: null/absent stays null (UNKNOWN).
+ *
+ * Must not fall back to 0. The Python normalizer deliberately emits null for
+ * measurements the notice did not report; coercing that to 0 here would
+ * re-fabricate exactly what it was fixed to stop inventing — and, since
+ * migration 0012 added CHECK constraints, a fabricated 0 for snr/far/
+ * error_radius now fails the insert outright and drops the event.
+ */
+function _measured(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Pull the 0-100 overall score out of the quality block, if present. */
+function _qualityScore(q: unknown): number | null {
+  if (!q || typeof q !== "object") return null;
+  const v = (q as Record<string, unknown>)["overall"];
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 && n <= 100 ? Math.round(n) : null;
+}
+
+/** Pull the 0-100 research interest out of its block, if present. */
+function _interestScore(i: unknown): number | null {
+  if (!i || typeof i !== "object") return null;
+  const v = (i as Record<string, unknown>)["score"];
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 && n <= 100 ? Math.round(n) : null;
+}
+
+/** Pull PASS | WARNING | FAIL out of the validation block, if present. */
+function _validationStatus(v: unknown): string | null {
+  if (!v || typeof v !== "object") return null;
+  const s = (v as Record<string, unknown>)["status"];
+  return typeof s === "string" && ["PASS", "WARNING", "FAIL", "UNKNOWN"].includes(s) ? s : null;
+}
+
+/**
+ * Localization containment convention (spec section 23).
+ *
+ * Only the six recognised conventions are stored; anything else becomes null
+ * rather than being passed through, because migration 0014's CHECK constraint
+ * would reject the row and drop the event. Null means "the source did not
+ * state it" and is never defaulted to a convention — 1-sigma and 90%
+ * containment differ by 2.15x for a 2-D Gaussian.
+ */
+const CONTAINMENT_CONVENTIONS = [
+  "1SIGMA_1D", "1SIGMA_2D", "50_2D", "68_2D", "90_2D", "95_2D",
+] as const;
+
+function _containment(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim().toUpperCase();
+  return (CONTAINMENT_CONVENTIONS as readonly string[]).includes(s) ? s : null;
+}
+
+/** Square degrees in the whole sky — 4*pi sr. */
+const FULL_SKY_DEG2 = 41253;
+
+/**
+ * A credible sky area, or null when the reported value is not a possible area.
+ *
+ * This guard exists because of the Phase 2 lesson: migration 0014 rejects an
+ * area above the whole sky, so passing a malformed value straight through
+ * would fail the INSERT and silently DROP the alert. The impossible value is
+ * discarded here while the validator's `credible_area_exceeds_sky` diagnostic
+ * keeps the record of what the source actually said — the event survives with
+ * an honest UNKNOWN instead of vanishing.
+ */
+function _skyArea(v: unknown): number | null {
+  const n = _positiveMeasured(v);
+  return n === null || n > FULL_SKY_DEG2 ? null : n;
+}
+
+/** _measured(), rejecting non-positive values where zero is unphysical. */
+function _positiveMeasured(v: unknown): number | null {
+  const n = _measured(v);
+  return n === null || n <= 0 ? null : n;
 }
 
 function _safeStr(v: unknown, fallback = ""): string {
@@ -181,11 +263,51 @@ async function _handleAlert(envelope: Record<string, unknown>): Promise<void> {
       eventId:            _safeStr(event["eventId"]) || `KAFKA-${Date.now()}`,
       eventType,
       detectionTime,
-      ra:                 _safeFloat(event["ra"]),
-      dec:                _safeFloat(event["dec"]),
-      errorRadius:        _safeFloat(event["errorRadius"]),
-      snr:                _safeFloat(event["snr"]),
-      far:                _safeFloat(event["far"]),
+      // OBSERVED measurements — null (UNKNOWN) passes straight through.
+      // Zero is unphysical for snr/far/errorRadius and is rejected by the
+      // CHECK constraints added in migration 0012.
+      ra:                 _measured(event["ra"]),
+      dec:                _measured(event["dec"]),
+      errorRadius:        _positiveMeasured(event["errorRadius"]),
+      // What that radius contains (spec section 23). Null means the source did
+      // not state it — which is NOT the same as 1-sigma, so it is never
+      // defaulted. A 90% containment radius is 2.15x the 1-sigma radius for a
+      // 2-D Gaussian; defaulting here would silently resize every error circle.
+      errorRadiusContainment: _containment(event["errorRadiusContainment"]),
+      // Credible AREAS in deg^2, kept separate from the radius. Conflating the
+      // two is the bug migration 0014 documents. An inverted pair is dropped
+      // rather than stored: a 50% region larger than the 90% region is
+      // impossible, the CHECK constraint rejects it, and an unguarded write
+      // would take the whole alert down with it.
+      ...(() => {
+        const a50 = _skyArea(event["area50Deg2"]);
+        const a90 = _skyArea(event["area90Deg2"]);
+        const inverted = a50 !== null && a90 !== null && a50 > a90;
+        return inverted
+          ? { area50Deg2: null, area90Deg2: null }
+          : { area50Deg2: a50, area90Deg2: a90 };
+      })(),
+      snr:                _positiveMeasured(event["snr"]),
+      far:                _positiveMeasured(event["far"]),
+      /** IceCube P(astrophysical) in [0,1] — NOT an SNR. */
+      signalness:         _measured(event["signalness"]),
+      // Scientific validation computed by the Python normalizer on the
+      // synchronous path. Stored whole, plus two denormalised columns so the
+      // dashboard can filter/sort without unpacking JSONB.
+      validation:         (event["validation"] as Record<string, unknown>) ?? null,
+      quality:            (event["quality"]    as Record<string, unknown>) ?? null,
+      qualityScore:       _qualityScore(event["quality"]),
+      validationStatus:   _validationStatus(event["validation"]),
+      // Derived quantities with their methods, assumptions and propagated
+      // uncertainties (spec sections 19-24, 33-34). Computed by the Python
+      // normalizer; stored whole so the cosmology stamp travels with the
+      // numbers it produced.
+      derived:            (event["derived"] as Record<string, unknown>) ?? null,
+      // Research interest (spec section 44) — a triage heuristic, kept
+      // strictly separate from qualityScore (is the data trustworthy?) and
+      // from notification priority (is it urgent?).
+      researchInterest:   (event["researchInterest"] as Record<string, unknown>) ?? null,
+      interestScore:      _interestScore(event["researchInterest"]),
       fluence:            event["fluence"]  != null ? _safeFloat(event["fluence"])  : null,
       dm:                 event["dm"]       != null ? _safeFloat(event["dm"])       : null,
       t90:                event["t90"]      != null ? _safeFloat(event["t90"])      : null,
@@ -211,6 +333,29 @@ async function _handleAlert(envelope: Record<string, unknown>): Promise<void> {
       latestRevision:     alertType ?? null,
     };
 
+    // ── Capture the prior state BEFORE it is overwritten ───────────────────
+    // The UPSERT below replaces the row in place, so this is the only moment
+    // at which the previous scientific state still exists. Without it a
+    // revision that moves a localization 40 degrees leaves no trace (Phase 6,
+    // spec sections 27-28).
+    //
+    // Read failure must not block ingestion: the revision is then recorded
+    // with an unknown delta rather than a fabricated empty one.
+    let previousRow: Record<string, unknown> | null = null;
+    try {
+      const [prior] = await db
+        .select()
+        .from(eventsTable)
+        .where(eq(eventsTable.eventId, record.eventId))
+        .limit(1);
+      previousRow = (prior as Record<string, unknown>) ?? null;
+    } catch (err) {
+      logger.error(
+        { err, eventId: record.eventId },
+        "[revisions] could not read prior state; delta will be unknown",
+      );
+    }
+
     // ── Upsert: one row per astrophysical event_id ─────────────────────────
     // First notice  → INSERT with revisionCount=0.
     // Later notices → UPDATE in place; revisionCount increments by 1.
@@ -228,12 +373,30 @@ async function _handleAlert(envelope: Record<string, unknown>): Promise<void> {
           ra:                 sql`EXCLUDED.ra`,
           dec:                sql`EXCLUDED.dec`,
           errorRadius:        sql`EXCLUDED.error_radius`,
+          errorRadiusContainment: sql`EXCLUDED.error_radius_containment`,
+          area50Deg2:         sql`EXCLUDED.area_50_deg2`,
+          area90Deg2:         sql`EXCLUDED.area_90_deg2`,
           snr:                sql`EXCLUDED.snr`,
           far:                sql`EXCLUDED.far`,
           fluence:            sql`EXCLUDED.fluence`,
           dm:                 sql`EXCLUDED.dm`,
+          signalness:         sql`EXCLUDED.signalness`,
+          validation:         sql`EXCLUDED.validation`,
+          quality:            sql`EXCLUDED.quality`,
+          qualityScore:       sql`EXCLUDED.quality_score`,
+          validationStatus:   sql`EXCLUDED.validation_status`,
+          // A revision changes the inputs, so every derived quantity must be
+          // recomputed with it — a stale rest-frame value attached to a
+          // revised redshift would be worse than none.
+          derived:            sql`EXCLUDED.derived`,
+          researchInterest:   sql`EXCLUDED.research_interest`,
+          interestScore:      sql`EXCLUDED.interest_score`,
           galLat:             sql`EXCLUDED.gal_lat`,
           galLon:             sql`EXCLUDED.gal_lon`,
+          // Derived geometry must track revised positions, and must be
+          // cleared when a revision removes the position.
+          sunDistance:        sql`EXCLUDED.sun_distance`,
+          moonDistance:       sql`EXCLUDED.moon_distance`,
           observatory:        sql`EXCLUDED.observatory`,
           classificationTier: sql`EXCLUDED.classification_tier`,
           latencyUs:          sql`EXCLUDED.latency_us`,
@@ -246,6 +409,22 @@ async function _handleAlert(envelope: Record<string, unknown>): Promise<void> {
 
     const isRevision = Number(upserted.revisionCount) > 0;
 
+    // ── Append to the revision history ─────────────────────────────────────
+    // Every notice is recorded, including the first: a history that begins at
+    // the second notice cannot show what the first one said. The delta is
+    // computed by the Python science layer (single implementation of the
+    // rules) and is null on the first notice, which has no predecessor.
+    const revisionDelta = await recordRevision({
+      eventPk:       upserted.id,
+      eventId:       upserted.eventId,
+      revisionIndex: Number(upserted.revisionCount),
+      alertType:     alertType ?? null,
+      lifecycle,
+      isRetraction:  upserted.isRetraction ?? false,
+      previousRow,
+      currentEvent:  { ...record, ...(event as Record<string, unknown>) },
+    });
+
     logger.info(
       {
         eventId:       upserted.eventId,
@@ -256,6 +435,8 @@ async function _handleAlert(envelope: Record<string, unknown>): Promise<void> {
         alertType,
         revisionCount: Number(upserted.revisionCount),
         action:        isRevision ? "updated" : "inserted",
+        // null means the delta could not be computed — NOT that nothing changed.
+        revisionSignificance: revisionDelta?.significance ?? null,
         source:        "gcn-kafka-bridge",
       },
       isRevision

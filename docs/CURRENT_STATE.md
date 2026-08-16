@@ -1,6 +1,6 @@
 # CURRENT_STATE.md — AstroSentinel
 
-> Last updated: 2026-08-06
+> Last updated: 2026-08-16
 
 ## Development Status
 
@@ -45,13 +45,12 @@ Collaboration features have backend routing wired but minimal frontend integrati
 
 | Feature | Status | Location |
 |---|---|---|
-| Sun/Moon angular distance | Hardcoded `90°` — needs `astropy` integration | `alertFilter.ts` or normalizer |
 | External links (GCN, ALADIN, ESASky, TNS) | Non-functional UI stubs | Frontend components |
 | Telescope follow-up request UI | Backend schema complete, no frontend | `routes/team.ts` schema |
 | Event localization FITS map viewer | Schema complete, no UI | — |
 | pgvector semantic similarity search | Schema defined, no population logic | `core.event_embeddings` |
 | `byObservatory` in `/events/stats` | Always returns `[]` | `routes/events.ts` |
-| `event_updated` WebSocket handling | Frontend doesn't process revision updates | `useAstroWebSocket.ts` |
+| `event_updated` WebSocket handling | Frontend doesn't process revision updates live; the per-event revision history IS recorded and shown (Phase 6) | `useAstroWebSocket.ts` |
 | `NU` (neutrino) count in stats | Not included in `byType` response | `routes/events.ts` |
 
 ---
@@ -67,7 +66,7 @@ Collaboration features have backend routing wired but minimal frontend integrati
 | ~~`core.event_correlations` declared in schema and written by `repository.ts` but **never created by any migration**~~ — `saveCorrelation()` swallowed every failure | Fixed 2026-08-16 | migration 0012 |
 | ~~Correlation scorer coerced `null` position to `0`, yielding a perfect 0° spatial match~~ — could manufacture multi-messenger associations | Fixed 2026-08-16 | `correlationEngine/scorer.ts` |
 | ~~FAR of 0 rendered as "1 per Infinity years"~~ — a 1/0 artifact shown as a scientific statement | Fixed 2026-08-16 | `formatters.ts` |
-| 279 archive events remain scientifically empty (GCN circulars are free text; measurements were never extracted) | Medium | `core.events` where `source='gcn_archive'` |
+| 279 archive events remain scientifically empty (GCN circulars are free text; measurements were never extracted). Now reported honestly rather than fabricated: they carry UNKNOWNs, a lower-bound interest score, and are never passed to the AI as zeros. | Medium | `core.events` where `source='gcn_archive'` |
 | `eventIngestion.ts` generates **random** sun/moon distances (`randomBetween(30,150)`) | Low (dead stub) | `artifacts/api-server/src/lib/eventIngestion.ts` |
 | `kafka_connected` in heartbeat always `true` even when disconnected | Low | Python WS manager |
 | `eventIngestion.ts` is a no-op stub but still imported | Low | `artifacts/api-server/src/lib/eventIngestion.ts` |
@@ -80,8 +79,69 @@ Collaboration features have backend routing wired but minimal frontend integrati
 
 ---
 
-## Recent Changes (2026-08-06)
+## Recent Changes (2026-08-16)
 
+> Note on numbering: the "Phase 5.x" entries below belong to the earlier
+> notification workstream. The "Scientific Intelligence Phase N" entries are the
+> separate Scientific Event Intelligence and Validation Layer.
+
+- **Scientific Intelligence Phase 7 — Research Interest & AI Guardrails**
+  (spec sections 40-44):
+  - `app/science/ai_context.py` — the model sees only measured values with
+    provenance; every unknown is stated as unknown. **Fixed:** the summary path
+    coerced absent measurements to 0, so 279 unlocalized events would have been
+    described to the model as sitting at RA=0/Dec=0 and 294 as having FAR=0 Hz
+    (= infinite significance). The anti-hallucination prompt was being defeated
+    by its own input.
+  - `verify_output()` + `aiGuard.ts` — generated text is screened for numeric
+    claims never supplied; unverifiable output is withheld, and a context that
+    cannot be built means the summary is skipped, not faked.
+  - `app/science/interest.py` + migration `0016` + `ResearchInterestPanel.tsx`
+    — the third score, kept strictly distinct: quality = is the data
+    trustworthy, priority = is it urgent, interest = is it worth studying.
+  - **Fixed:** events with no applicable rule scored 0 and read as MINIMAL;
+    they now return UNASSESSED, because "found little" ≠ "nothing to look at".
+  - 331 backend tests pass. Interest bands: LOW 296 / MODERATE 3 / UNASSESSED 5.
+- **Scientific Intelligence Phase 6 — Revision Intelligence & Scientific Delta Detection**
+  (spec sections 27-28):
+  - `app/science/revisions.py` — distinguishes a *refinement* (position moves
+    within the combined uncertainties) from an *inconsistency* (moves far
+    outside them, ERROR at 3σ). Localization radii are compared only when both
+    notices state the same containment convention.
+  - Migration `0015` — append-only `core.event_revisions`: one row per notice
+    with its snapshot and the delta against its predecessor. Revisions
+    previously overwrote `core.events` in place, destroying the prior state.
+  - `POST /api/science/revision-delta` (Python) + `revisionRecorder.ts` (Node):
+    the api-server knows the previous state, but the delta rules stay in Python
+    and exist exactly once.
+  - `GET /events/:id/revisions` + `RevisionTimeline.tsx`, shown in both modes.
+  - Fixed: `changeDetector.ts` treated a *lost* localization (radius 0 =
+    UNKNOWN since Phase 2) as a **perfect** one and fired "LOCALIZATION_IMPROVED".
+  - 296 backend tests pass. Archive events predate tracking and have no history;
+    the UI states that rather than implying they were never revised.
+- **Scientific Intelligence Phase 5 — Uncertainty, Units, Cosmology, Derived Science**
+  (spec sections 19-24, 33-34):
+  - `app/science/units.py` — canonical units across 10 dimensions. A unit is
+    never guessed, and a cross-dimension conversion is refused rather than
+    performed.
+  - `app/science/uncertainty.py` — first-order propagation (independence stated,
+    not hidden) and localization containment semantics: 90% containment is
+    2.146σ in 2-D but 1.645σ in 1-D, and 68% of a skymap is 1.515σ, not 1σ.
+  - `app/science/cosmology.py` — explicit named cosmology stamped onto every
+    derived value. `ASTROSENTINEL_COSMOLOGY` (Planck18 default). An unknown
+    model derives nothing instead of falling back.
+  - `app/science/observability.py` — altitude/azimuth/airmass for a configured
+    site only (`ASTROSENTINEL_SITE_LAT`/`_LON`). Unconfigured ⇒ UNKNOWN with the
+    reason; never computed from an invented location.
+  - `app/science/derivations.py` + migration `0014` + `DerivedSciencePanel.tsx`
+    — derived quantities persisted and rendered with method, assumptions and
+    propagated uncertainty; UNKNOWN shown in words with what's missing.
+  - Fixed: GW `area_90` (deg², a credible area) was stored as `errorRadius`
+    (arcmin, an angle); the sky viewer labelled every circle "1σ" regardless of
+    what the source said; live ingestion could drop alerts on the new CHECK
+    constraints.
+  - 257 backend tests pass. Archive backfilled (304 events) — all cosmological
+    quantities are UNKNOWN because the archive contains **zero redshifts**.
 - **Phase 5.6 — Correlation-Aware Scientific Notifications:**
   - Integrated Multi-Messenger Correlation Engine with the notification pipeline in `eventTemplate.ts`.
   - Added candidate events listing to the correlation block for better scientific context.

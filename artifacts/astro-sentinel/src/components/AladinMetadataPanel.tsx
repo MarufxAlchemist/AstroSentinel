@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import type { AstroEvent } from "@workspace/api-client-react";
 import { Copy, Check, ExternalLink } from "lucide-react";
-import { formatMicrosecondDate, formatMeasured } from "@/lib/formatters";
+import { formatMicrosecondDate, formatMeasured, formatDerived } from "@/lib/formatters";
 import { buildExternalLinks } from "./BasicInfo";
 
 interface Props {

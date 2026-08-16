@@ -5,6 +5,10 @@ import { EventBadge } from "@/components/EventBadge";
 import { formatMicrosecondDate, formatLatency, formatDerived, formatMeasured, formatExp, formatFarInterval } from "@/lib/formatters";
 import { ArrowLeft, Target, Map, Activity, Clock, Zap, Database, FlaskConical, Bookmark, BookmarkCheck } from "lucide-react";
 import { CorrelationAnalysisPanel } from "@/components/CorrelationAnalysisPanel";
+import { ValidationPanel } from "@/components/ValidationPanel";
+import { DerivedSciencePanel } from "@/components/DerivedSciencePanel";
+import { RevisionTimeline } from "@/components/RevisionTimeline";
+import { ResearchInterestPanel } from "@/components/ResearchInterestPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SkyMap } from "@/components/SkyMap";
@@ -384,6 +388,26 @@ export default function EventDetailPage() {
             </Card>
           )}
 
+
+          {/* Research interest — shown in both modes: whether an event is
+              worth studying is not a specialist-only question. */}
+          <ResearchInterestPanel interest={event.researchInterest} />
+
+          {/* Derived quantities with their methods and assumptions */}
+          {scienceMode && <DerivedSciencePanel derived={event.derived} />}
+
+          {/* What each notice changed. Shown outside Science Mode too: a
+              retraction or an inconsistent position is not a specialist
+              detail — anyone acting on this event needs to see it. */}
+          <RevisionTimeline eventId={String(event.id)} />
+
+          {/* Scientific validation — full detail in Science Mode */}
+          {scienceMode && (
+            <ValidationPanel
+              validation={event.validation as never}
+              quality={event.quality as never}
+            />
+          )}
 
           {/* Multi-Messenger Correlations */}
           <Card className="bg-card border-border/50 shadow-none">

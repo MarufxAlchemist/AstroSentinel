@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS "core"."ai_scientific_summaries" (
 );
 
 DO $$ BEGIN
+ ALTER TABLE "core"."ai_scientific_summaries" DROP CONSTRAINT IF EXISTS "ai_scientific_summaries_event_id_events_id_fk";
  ALTER TABLE "core"."ai_scientific_summaries" ADD CONSTRAINT "ai_scientific_summaries_event_id_events_id_fk" FOREIGN KEY ("event_id") REFERENCES "core"."events"("id") ON DELETE cascade ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;

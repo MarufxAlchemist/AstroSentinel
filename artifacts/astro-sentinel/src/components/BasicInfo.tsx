@@ -1,5 +1,5 @@
 import type { AstroEvent } from "@workspace/api-client-react";
-import { formatMicrosecondDate, formatLatency, formatMeasured, formatExp } from "@/lib/formatters";
+import { formatMicrosecondDate, formatLatency, formatMeasured, formatExp, formatDerived } from "@/lib/formatters";
 
 interface Props { event: AstroEvent; }
 

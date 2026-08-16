@@ -32,11 +32,11 @@ interface BootstrapEvent {
   eventType:           string;
   observatory?:        string;
   detectionTime:       string;
-  ra:                  number;
-  dec:                 number;
-  errorRadius:         number;
-  snr:                 number;
-  far:                 number;
+  ra?:                 number | null;
+  dec?:                number | null;
+  errorRadius?:        number | null;
+  snr?:                number | null;
+  far?:                number | null;
   fluence?:            number | null;
   dm?:                 number | null;
   t90?:                number | null;
@@ -154,11 +154,16 @@ export async function runBootstrap(): Promise<void> {
             eventType:          ev.eventType,
             observatory:        ev.observatory ?? "Unknown",
             detectionTime,
-            ra:                 safeFloat(ev.ra),
-            dec:                safeFloat(ev.dec),
-            errorRadius:        safeFloat(ev.errorRadius),
-            snr:                safeFloat(ev.snr),
-            far:                safeFloat(ev.far),
+            // OBSERVED measurements — null (UNKNOWN) rather than a
+            // fabricated 0. Zero is rejected by the migration-0012 CHECKs.
+            ra:                 ev.ra  != null ? safeFloat(ev.ra)  : null,
+            dec:                ev.dec != null ? safeFloat(ev.dec) : null,
+            errorRadius:        ev.errorRadius != null && safeFloat(ev.errorRadius) > 0
+                                  ? safeFloat(ev.errorRadius) : null,
+            snr:                ev.snr != null && safeFloat(ev.snr) > 0
+                                  ? safeFloat(ev.snr) : null,
+            far:                ev.far != null && safeFloat(ev.far) > 0
+                                  ? safeFloat(ev.far) : null,
             fluence:            ev.fluence            ?? null,
             dm:                 ev.dm                 ?? null,
             t90:                ev.t90                ?? null,

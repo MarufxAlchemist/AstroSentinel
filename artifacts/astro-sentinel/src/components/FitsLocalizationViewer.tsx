@@ -46,6 +46,30 @@ export function FitsLocalizationViewer({
 
   const { ra, dec, eventId, errorRadius } = event;
 
+  /**
+   * What the drawn circle actually contains (spec section 23).
+   *
+   * This viewer previously labelled every circle "1σ Error Radius". That was a
+   * claim the data does not support: most sources never state a containment
+   * convention, and a 90% credible radius is 2.15x the 1σ radius for a 2-D
+   * Gaussian. Drawing one and calling it the other misrepresents the search
+   * area by a factor of ~4.6 in solid angle. The label now reflects what the
+   * source said, and says "convention not stated" when it said nothing.
+   */
+  const containment = (event as { errorRadiusContainment?: string | null })
+    .errorRadiusContainment;
+  const CONTAINMENT_LABELS: Record<string, string> = {
+    "1SIGMA_1D": "1σ (68.27%, 1-D)",
+    "1SIGMA_2D": "1σ radius of a 2-D Gaussian (39.35%)",
+    "50_2D": "50% credible region",
+    "68_2D": "68.27% containment (2-D)",
+    "90_2D": "90% credible region",
+    "95_2D": "95% credible region",
+  };
+  const containmentLabel = containment
+    ? CONTAINMENT_LABELS[containment] ?? containment
+    : "containment convention not stated by the source";
+
   const hasCircle = typeof errorRadius === "number" && errorRadius > 0;
   const radiusDeg = hasCircle ? arcminToDeg(errorRadius!) : 0;
   const target = `${ra.toFixed(6)} ${dec.toFixed(6)}`;
@@ -127,8 +151,9 @@ export function FitsLocalizationViewer({
               `<b>RA:</b> ${ra.toFixed(6)}°<br/>` +
               `<b>Dec:</b> ${dec.toFixed(6)}°` +
               (hasCircle
-                ? `<br/><b>1σ Error Radius:</b> ${errorRadius!.toFixed(2)}'` +
-                  ` (${radiusDeg.toFixed(4)}°)`
+                ? `<br/><b>Localization radius:</b> ${errorRadius!.toFixed(2)}'` +
+                  ` (${radiusDeg.toFixed(4)}°)` +
+                  `<br/><span style="color:#9ca3af">${containmentLabel}</span>`
                 : ""),
           }),
         ]);
@@ -147,10 +172,10 @@ export function FitsLocalizationViewer({
           aladin.addCatalog(edgeCat);
           edgeCat.addSources([
             A.source(edgeRa, edgeDec, {
-              popupTitle: "1σ Error Radius",
+              popupTitle: "Localization radius",
               popupDesc:
                 `<b>${errorRadius!.toFixed(2)}</b> arcmin (${radiusDeg.toFixed(4)}°)<br/>` +
-                `<span style="color:#9ca3af">Conversion: arcmin ÷ 60 = deg</span>`,
+                `<span style="color:#9ca3af">${containmentLabel}</span>`,
             }),
           ]);
         }
@@ -168,7 +193,7 @@ export function FitsLocalizationViewer({
       cancelled = true;
       aladinRef.current = null;
     };
-  }, [target, radiusDeg, eventId, ra, dec, errorRadius, hasCircle]);
+  }, [target, radiusDeg, eventId, ra, dec, errorRadius, hasCircle, containmentLabel]);
 
   // Load FITS overlay when available
   useEffect(() => {
@@ -238,7 +263,8 @@ export function FitsLocalizationViewer({
             {hasCircle ? (
               <span className="font-mono">
                 <span className="text-emerald-400 font-semibold">{errorRadius!.toFixed(2)}'</span>
-                &nbsp;<span className="opacity-60">({radiusDeg.toFixed(4)}°)&nbsp;&nbsp;1σ uncertainty</span>
+                &nbsp;<span className="opacity-60">({radiusDeg.toFixed(4)}°)</span>
+                &nbsp;<span className={containment ? "opacity-60" : "text-amber-500/80"}>{containmentLabel}</span>
               </span>
             ) : (
               <span className="opacity-50 italic font-mono">not available</span>

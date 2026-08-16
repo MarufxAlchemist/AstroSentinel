@@ -22,8 +22,16 @@ function Item({ label, value }: { label: string; value: string }) {
 }
 
 export function DerivedParameters({ event }: Props) {
-  // Ep wasn't added to schema, derive deterministically from SNR
-  const ep = event.eventType === "GRB" ? (event.snr * 9.2).toFixed(0) : "—";
+  // Ep (spectral peak energy) is NOT reported by the current ingestion path
+  // and cannot be derived from anything we store.
+  //
+  // This previously read `(event.snr * 9.2).toFixed(0)` — multiplying the
+  // signal-to-noise ratio by a constant and labelling the result "keV".
+  // There is no physical relationship between SNR and peak energy; that
+  // produced an invented spectral measurement displayed as though observed
+  // (e.g. SNR 14.7 -> "135 keV"). Ep must come from the spectral fit in the
+  // originating notice, so until that is parsed it is UNKNOWN.
+  const ep = "—";
   const t90 = event.t90 != null ? event.t90.toFixed(1) : "—";
   const fluence = event.fluence != null ? event.fluence.toExponential(3) : "—";
   const peakFlux = event.peakFlux != null ? event.peakFlux.toExponential(3) : "—";

@@ -38,7 +38,14 @@ export interface NotificationSnapshot {
   priorityLevel:  string;   // "P0" | "P1" | "P2" | "P3"
   priorityScore:  number;   // 0–100
   corrConfidence: string;   // "HIGH" | "MEDIUM" | "LOW" | "NONE"
-  errorRadius:    number;   // arcmin
+  /**
+   * Localization radius in arcmin. 0 means UNKNOWN — the notice reported no
+   * localization — NOT a perfectly-known position. No instrument reports a
+   * zero-radius localization, so the two can never be confused legitimately.
+   * The containment convention is not carried here, so this value must only
+   * ever be compared against another radius from the same source.
+   */
+  errorRadius:    number;
 }
 
 // ---------------------------------------------------------------------------

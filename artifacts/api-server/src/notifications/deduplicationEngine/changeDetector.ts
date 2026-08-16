@@ -41,14 +41,32 @@ function isCorrelationImproved(
 
 /**
  * Returns true if the error radius was reduced by AT LEAST the required percentage.
+ *
+ * Zero or absent is UNKNOWN, never "perfect"
+ * ------------------------------------------
+ * This function previously read:
+ *
+ *     if (currentRadius <= 0) return true;  // "Perfect localization"
+ *
+ * Since Phase 2 an absent localization is stored as null and arrives here as
+ * 0, so a revision that STOPPED reporting a localization was classified as a
+ * perfect localization and fired a "LOCALIZATION_IMPROVED" alert. That is
+ * inverted: losing the uncertainty is a loss of knowledge, not a refinement,
+ * and no real instrument reports a zero-radius position.
+ *
+ * Both directions are now treated as "not an improvement" — the change is
+ * still recorded in the revision history (Phase 6), which reports a lost
+ * localization explicitly rather than as a silent upgrade.
  */
 function isLocalizationImproved(
   currentRadius: number,
   lastRadius: number,
   requiredPct: number,
 ): boolean {
-  if (lastRadius <= 0) return false; // Cannot improve on 0 or negative
-  if (currentRadius <= 0) return true; // Perfect localization (or point source) is always an improvement
+  // Previous radius unknown → there is nothing to have improved upon.
+  if (!Number.isFinite(lastRadius) || lastRadius <= 0) return false;
+  // Current radius unknown → knowledge was lost, not gained.
+  if (!Number.isFinite(currentRadius) || currentRadius <= 0) return false;
   if (currentRadius >= lastRadius) return false;
 
   const reductionPct = ((lastRadius - currentRadius) / lastRadius) * 100;

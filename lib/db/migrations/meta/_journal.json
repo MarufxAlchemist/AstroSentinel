@@ -50,6 +50,76 @@
       "when": 1784884352882,
       "tag": "0006_ai_correlation_analysis",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784884352883,
+      "tag": "0007_notification_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784884352884,
+      "tag": "0008_ai_scientific_summaries",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784884352885,
+      "tag": "0009_notification_center",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1784884352886,
+      "tag": "0010_nullable_derived_coords",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1784884352887,
+      "tag": "0011_nullable_source_measurements",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1784884352888,
+      "tag": "0012_signalness_and_provenance",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1784884352889,
+      "tag": "0013_event_validation",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1784884352890,
+      "tag": "0014_derived_science",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1784884352891,
+      "tag": "0015_event_revisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1784884352892,
+      "tag": "0016_research_interest",
+      "breakpoints": true
     }
   ]
 }

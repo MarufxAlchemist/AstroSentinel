@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { createHash } from "node:crypto";
-import { db, eventsTable, eventLocalizations, aiCorrelationAnalysis } from "@workspace/db";
+import { db, eventsTable, eventLocalizations, aiCorrelationAnalysis, eventRevisions } from "@workspace/db";
 import { desc, eq, and, sql } from "drizzle-orm";
 import { ListEventsQueryParams, GetEventParams } from "@workspace/api-zod";
 import { CorrelationAgent, type CorrelationAnalysisResult } from "../services/ai/correlation-agent.js";
@@ -33,6 +33,12 @@ function formatEvent(row: typeof eventsTable.$inferSelect) {
     ra: row.ra,
     dec: row.dec,
     errorRadius: row.errorRadius,
+    // Localization semantics (spec section 23): a radius is not interpretable
+    // without knowing what fraction it contains, so the convention travels
+    // with it. undefined here means the source never stated it.
+    errorRadiusContainment: row.errorRadiusContainment ?? undefined,
+    area50Deg2: row.area50Deg2 ?? undefined,
+    area90Deg2: row.area90Deg2 ?? undefined,
     snr: row.snr,
     far: row.far,
     fluence: row.fluence ?? undefined,
@@ -41,6 +47,9 @@ function formatEvent(row: typeof eventsTable.$inferSelect) {
     peakFlux: row.peakFlux ?? undefined,
     chirpMass: row.chirpMass ?? undefined,
     luminosityDistance: row.luminosityDistance ?? undefined,
+    luminosityDistanceError: row.luminosityDistanceError ?? undefined,
+    redshift: row.redshift ?? undefined,
+    redshiftError: row.redshiftError ?? undefined,
     galLat: row.galLat,
     galLon: row.galLon,
     sunDistance: row.sunDistance,
@@ -52,6 +61,19 @@ function formatEvent(row: typeof eventsTable.$inferSelect) {
     classificationTier: (row.classificationTier ?? undefined) as "GOLD" | "BRONZE" | undefined,
     isHistorical: row.isHistorical ?? false,
     source: row.source ?? "kafka",
+    signalness: row.signalness ?? undefined,
+    validation: row.validation ?? undefined,
+    quality: row.quality ?? undefined,
+    qualityScore: row.qualityScore ?? undefined,
+    validationStatus: row.validationStatus ?? undefined,
+    // Derived quantities with their method, assumptions, propagated
+    // uncertainty and the cosmology stamp (spec sections 19-24, 33-34).
+    derived: row.derived ?? undefined,
+    // Research interest (spec section 44). Distinct from qualityScore: one
+    // asks whether the data is trustworthy, the other whether the event is
+    // worth studying.
+    researchInterest: row.researchInterest ?? undefined,
+    interestScore: row.interestScore ?? undefined,
   };
 }
 
@@ -158,6 +180,52 @@ router.get("/events/:id/localizations", async (req, res) => {
       vol90Mpc3:  loc.vol90Mpc3  ?? undefined,
       hasNsProb:  loc.hasNsProb  ?? undefined,
       createdAt:  loc.createdAt.toISOString(),
+    }))
+  );
+});
+
+// ─── GET /events/:id/revisions ───────────────────────────────────────────────
+//
+// The append-only history of every notice received for this event, newest
+// first, with the scientific delta each one carried (Phase 6, spec 27-28).
+//
+// Registered before /:id so Express does not consume "revisions" as :id.
+//
+// `significance: null` on a revision means the delta could not be computed —
+// it does NOT mean the revision carried no scientific change, and the client
+// must render the two differently.
+
+router.get("/events/:id/revisions", async (req, res) => {
+  const parsed = GetEventParams.safeParse(req.params);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid params" });
+    return;
+  }
+
+  const id = parseInt(parsed.data.id, 10);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "ID must be numeric" });
+    return;
+  }
+
+  const rows = await db
+    .select()
+    .from(eventRevisions)
+    .where(eq(eventRevisions.eventPk, BigInt(id)))
+    .orderBy(desc(eventRevisions.revisionIndex));
+
+  res.json(
+    rows.map((r) => ({
+      id: String(r.id),
+      eventId: r.eventId,
+      revisionIndex: r.revisionIndex,
+      alertType: r.alertType ?? undefined,
+      lifecycle: r.lifecycle ?? undefined,
+      isRetraction: r.isRetraction,
+      snapshot: r.snapshot,
+      delta: r.delta ?? undefined,
+      significance: r.significance ?? null,
+      receivedAt: r.receivedAt.toISOString(),
     }))
   );
 });
@@ -317,7 +385,20 @@ function computeCorrelations(
 ): CorrelationResult[] {
   const results: CorrelationResult[] = [];
 
+  // Spatial coincidence cannot be assessed without both sky positions.
+  // JavaScript coerces null to 0 inside the haversine, which yields a
+  // separation of exactly 0deg — a *perfect* spatial match — and would
+  // manufacture correlations between events that simply have no position.
+  // 279 of 304 archived events have no position, so this is not hypothetical.
+  //
+  // NOTE: this mirrors the same guard in
+  // science/correlationEngine/scorer.ts. There are two independent
+  // correlation implementations in this codebase; both need the guard.
+  if (target.ra == null || target.dec == null) return results;
+
   for (const candidate of candidates) {
+    if (candidate.ra == null || candidate.dec == null) continue;
+
     const config = getPairConfig(target.eventType, candidate.eventType);
 
     const deltaTSeconds =

@@ -3,7 +3,7 @@ import { useAstroWebSocket } from "@/hooks/useAstroWebSocket";
 import { useListEvents, useGetEventStats } from "@workspace/api-client-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { AstroEvent } from "@workspace/api-client-react/src/generated/api.schemas";
-import { formatMicrosecondDate, formatLatency, formatMeasured, formatExp } from "@/lib/formatters";
+import { formatMicrosecondDate, formatLatency, formatMeasured, formatExp, formatDerived } from "@/lib/formatters";
 import { useScienceMode } from "@/lib/ScienceModeContext";
 import { SciencePanel } from "@/components/SciencePanel";
 
@@ -198,7 +198,7 @@ function generateSummary(event: AstroEvent): string {
   const err = formatMeasured(event.errorRadius, 2);
   const snr = formatMeasured(event.snr, 1);
   const far = formatExp(event.far, 2);
-  let body = `On ${dateStr} UTC, the ${event.observatory} instrument detected a ${type} (${event.eventType}) named ${event.eventId}. This event was observed at coordinates ${raDec} with a localization uncertainty of approximately ${err} arcminutes.`;
+  let body = `On ${dateStr} UTC, the ${event.observatory} instrument detected a ${type} (${event.eventType}) named ${event.eventId}. This event was observed at coordinates ${raDec} ${event.errorRadius != null ? `with a localization uncertainty of approximately ${err} arcminutes` : "with no localization uncertainty reported"}.`;
   if (event.eventType === "GRB" && event.fluence != null) {
     body += ` The measured fluence of this burst was ${event.fluence.toExponential(3)} erg/cm², placing it among the detected gamma-ray transients in this observation window. The signal-to-noise ratio of ${snr}σ and false alarm rate of ${far} Hz indicate a statistically significant detection.`;
     body += ` Gamma-ray bursts of this nature are thought to originate from the collapse of massive stars or the merger of compact binary systems, releasing enormous energy on cosmological scales. Follow-up multi-wavelength observations are recommended to constrain the afterglow and host environment.`;
@@ -234,26 +234,38 @@ function RightPanel({ event }: { event: AstroEvent | null }) {
     return <div className="flex-1 flex flex-col items-center justify-center p-6 text-center"><div className="text-muted-foreground text-sm">Select an event from the list to view details</div></div>;
   }
   const summary = generateSummary(event);
-  const ra  = event.ra.toFixed(6);
-  const dec = event.dec.toFixed(6);
+  // Aladin/FOV links need a concrete position; fall back to the sky origin
+  // ONLY for building the external URL, never for display.
+  const ra  = formatMeasured(event.ra, 6);
+  const dec = formatMeasured(event.dec, 6);
+  const hasPosition = event.ra != null && event.dec != null;
+  const raNum  = event.ra ?? 0;
+  const decNum = event.dec ?? 0;
   const fov = 2;
+  // Sky-atlas links are only meaningful with a real position. When the event
+  // has none, they are omitted rather than pointed at (0, 0) — which is a
+  // real place on the sky and would send a researcher to the wrong field.
   const externalLinks = [
     {
       name: "GCN", icon: "📡", desc: "Search GCN for this event",
       href: `https://gcn.nasa.gov/circulars?query=${encodeURIComponent(event.eventId)}&startDate=&endDate=`,
     },
-    {
-      name: "ALADIN", icon: "🌌", desc: "Displays event in an interactive sky atlas",
-      href: `https://aladin.u-strasbg.fr/AladinLite/?target=${encodeURIComponent(`${ra} ${dec}`)}&fov=${fov}&survey=P%2FDSS2%2Fcolor`,
-    },
-    {
-      name: "ESASky", icon: "🔭", desc: "Displays event in an interactive sky atlas",
-      href: `https://sky.esa.int/?target=${encodeURIComponent(`${ra} ${dec}`)}&hips=DSS2+color&fov=${fov}&cooframe=ICRSd&sci=false`,
-    },
-    {
-      name: "TNS", icon: "🌟", desc: "Transient Name Server (search)",
-      href: `https://www.wis-tns.org/search?ra=${ra}&decl=${dec}&radius=1&coords_unit=arcsec`,
-    },
+    ...(hasPosition
+      ? [
+          {
+            name: "ALADIN", icon: "🌌", desc: "Displays event in an interactive sky atlas",
+            href: `https://aladin.u-strasbg.fr/AladinLite/?target=${encodeURIComponent(`${raNum} ${decNum}`)}&fov=${fov}&survey=P%2FDSS2%2Fcolor`,
+          },
+          {
+            name: "ESASky", icon: "🔭", desc: "Displays event in an interactive sky atlas",
+            href: `https://sky.esa.int/?target=${encodeURIComponent(`${raNum} ${decNum}`)}&hips=DSS2+color&fov=${fov}&cooframe=ICRSd&sci=false`,
+          },
+          {
+            name: "TNS", icon: "🌟", desc: "Transient Name Server (search)",
+            href: `https://www.wis-tns.org/search?ra=${raNum}&decl=${decNum}&radius=1&coords_unit=arcsec`,
+          },
+        ]
+      : []),
   ];
   return (
     <div className="flex flex-col h-full">
@@ -267,7 +279,7 @@ function RightPanel({ event }: { event: AstroEvent | null }) {
             <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Gal. Lat</span><span className="text-foreground">{formatDerived(event.galLat, 2)}</span></div>
             <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Sun dist.</span><span className="text-foreground">{formatDerived(event.sunDistance, 1)}</span></div>
             <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Moon dist.</span><span className="text-foreground">{formatDerived(event.moonDistance, 1)}</span></div>
-            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">FAR</span><span className="text-foreground">{event.far.toExponential(2)} Hz</span></div>
+            <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">FAR</span><span className="text-foreground">{formatExp(event.far, 2, " Hz")}</span></div>
             <div className="flex justify-between border-b border-border/50 pb-0.5"><span className="text-muted-foreground">Err radius</span><span className="text-foreground">{formatMeasured(event.errorRadius, 2, "'")}</span></div>
             {event.fluence != null && (<div className="flex justify-between border-b border-border/50 pb-0.5 col-span-2"><span className="text-muted-foreground">Fluence</span><span className="text-foreground">{event.fluence.toExponential(3)} erg/cm²</span></div>)}
             {event.dm != null && (<div className="flex justify-between border-b border-border/50 pb-0.5 col-span-2"><span className="text-muted-foreground">DM</span><span className="text-foreground">{event.dm.toFixed(1)} pc/cm³</span></div>)}

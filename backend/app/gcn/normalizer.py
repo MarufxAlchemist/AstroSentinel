@@ -69,6 +69,15 @@ def normalize(topic: str, raw: dict[str, Any]) -> dict[str, Any]:
         "ra":            None,
         "dec":           None,
         "errorRadius":   None,
+        # What the localization radius actually means (spec section 23). None
+        # = the source did not state it, which is the honest default: a
+        # 1-sigma radius and a 90% containment radius differ by 2.15x, so
+        # assuming one would silently resize every error circle.
+        "errorRadiusContainment": None,
+        # Credible-region areas in deg2, kept as their own quantity. They are
+        # NOT a localization radius: an area is not an angle.
+        "area50Deg2":    None,
+        "area90Deg2":    None,
         "snr":           None,
         "far":           None,
         "latencyUs":     0,
@@ -94,6 +103,58 @@ def normalize(topic: str, raw: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         # Keep defaults; log but never crash the listener
         print(f"[normalizer] Failed to parse {topic}: {exc}")
+
+    # ── Scientific validation (synchronous critical path, spec section 41) ──
+    # Deterministic and cheap: pure range/consistency checks, no I/O and no
+    # ephemeris work. Attaches diagnostics + a transparent quality score.
+    #
+    # Wrapped defensively: validation is an observability feature and must
+    # never be able to drop an alert (spec section 48).
+    try:
+        from app.science import validate_event, score_quality
+
+        report = validate_event(base)
+        base["validation"] = report.to_dict()
+        base["quality"] = score_quality(base, report)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"[normalizer] Validation failed for {topic}: {exc}")
+        base["validation"] = {
+            "status": "UNKNOWN",
+            "worstLevel": None,
+            "counts": {},
+            "diagnostics": [],
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        base["quality"] = None
+
+    # ── Derived scientific quantities (spec sections 19-24, 33-34) ──────────
+    # Rest-frame values, cosmological distances, band-limited E_iso, credible-
+    # region geometry and observability. Every entry carries its method,
+    # assumptions and provenance, and an underivable quantity is recorded as
+    # UNKNOWN-with-a-reason rather than omitted or guessed.
+    #
+    # Wrapped separately from validation so a failure in either cannot take the
+    # other down, and neither can drop an alert.
+    try:
+        from app.science.derivations import derive_all
+
+        base["derived"] = derive_all(base)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"[normalizer] Derivation failed for {topic}: {exc}")
+        base["derived"] = {"error": f"{type(exc).__name__}: {exc}"}
+
+    # ── Research interest (spec section 44) ─────────────────────────────────
+    # Deterministic, cheap and rule-based, so it belongs on the synchronous
+    # path alongside validation (spec section 41). It answers a different
+    # question from the quality score — is this worth STUDYING, rather than is
+    # the data trustworthy — and the two are never merged.
+    try:
+        from app.science.interest import score_interest
+
+        base["researchInterest"] = score_interest(base)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"[normalizer] Interest scoring failed for {topic}: {exc}")
+        base["researchInterest"] = None
 
     return base
 
@@ -452,7 +513,21 @@ def _igwn(raw: dict, event_type: str) -> dict:
         "detectionTime": det_time,
         "ra":            ra,
         "dec":           dec,
-        "errorRadius":   _positive_measured(event_block.get("error_radius", raw.get("area_90"))),
+        # `area_90` is a 90% credible AREA in deg2. It was previously used as a
+        # fallback for errorRadius, which is an ANGLE in arcmin — so a 100 deg2
+        # skymap was recorded as a 100 arcmin (1.67 deg) radius, when the
+        # equivalent radius is 5.6 deg. That conflated a unit, a dimension and
+        # a containment convention in one assignment. The area now keeps its
+        # own field and errorRadius stays UNKNOWN unless genuinely reported.
+        "errorRadius":   _positive_measured(event_block.get("error_radius")),
+        "area90Deg2":    _positive_measured(
+            event_block.get("area_90", raw.get("area_90"))),
+        "area50Deg2":    _positive_measured(
+            event_block.get("area_50", raw.get("area_50"))),
+        # errorRadiusContainment is deliberately left unset. The IGWN payload
+        # does not state what its error_radius contains, and inventing "90%"
+        # here would be the same class of assumption this field exists to
+        # prevent. Unstated is reported as unstated.
         "snr":           _positive_measured(event_block.get("snr",  raw.get("snr"))),
         "far":           _positive_measured(event_block.get("far",  raw.get("far"))),
         "latencyUs":     _latency_us(det_time),

@@ -40,6 +40,86 @@ import os
 def health():
     return {"status": "healthy"}
 
+
+# ─── Scientific revision delta (Phase 6, spec sections 27-28) ────────────────
+#
+# The delta RULES live in app.science.revisions and must exist exactly once.
+# The api-server owns the database and therefore knows the previous state, but
+# it must not reimplement the science in TypeScript — a second implementation
+# is how the correlation scorer drifted in Phase 2. So it posts both snapshots
+# here and receives the computed report.
+#
+# The caller treats a failure of this endpoint as "delta unknown", never as
+# "no changes": ingestion is never blocked and a revision is never silently
+# recorded as uneventful.
+
+# ─── AI context and output verification (Phase 7, spec sections 40-43) ──────
+#
+# The model is an analytical assistant, never a source of truth. These two
+# endpoints enforce that from both sides: the context it is given must not
+# contain invented values, and the text it returns is screened for numbers that
+# were never supplied.
+
+@app.post("/api/science/ai-context")
+async def ai_context(payload: dict):
+    from app.science.ai_context import build_context
+
+    event = payload.get("event")
+    if not isinstance(event, dict):
+        return {"ok": False, "error": "An 'event' object is required."}
+    try:
+        return {"ok": True, "context": build_context(event)}
+    except Exception as exc:  # pragma: no cover - defensive
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+@app.post("/api/science/verify-ai-output")
+async def verify_ai_output(payload: dict):
+    from app.science.ai_context import verify_output
+
+    context = payload.get("context")
+    text = payload.get("text")
+    if not isinstance(context, dict) or text is None:
+        return {"ok": False, "error": "Both 'context' and 'text' are required."}
+    try:
+        return {"ok": True, "verification": verify_output(text, context)}
+    except Exception as exc:  # pragma: no cover - defensive
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+@app.post("/api/science/interest")
+async def research_interest(payload: dict):
+    from app.science.interest import score_interest
+
+    event = payload.get("event")
+    if not isinstance(event, dict):
+        return {"ok": False, "error": "An 'event' object is required."}
+    try:
+        return {"ok": True, "interest": score_interest(event)}
+    except Exception as exc:  # pragma: no cover - defensive
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+@app.post("/api/science/revision-delta")
+async def revision_delta(payload: dict):
+    from app.science.revisions import compare_revisions
+
+    previous = payload.get("previous")
+    current = payload.get("current")
+    if not isinstance(previous, dict) or not isinstance(current, dict):
+        return {
+            "ok": False,
+            "error": "Both 'previous' and 'current' snapshots are required. "
+                     "No delta is reported rather than an empty one.",
+        }
+
+    try:
+        report = compare_revisions(previous, current)
+    except Exception as exc:  # pragma: no cover - defensive
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    return {"ok": True, "report": report.to_dict()}
+
 @app.get("/api/events")
 def get_events(limit: int = 100):
     events_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "historical_events.json")
