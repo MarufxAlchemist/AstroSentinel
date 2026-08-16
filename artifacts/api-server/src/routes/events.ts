@@ -54,7 +54,9 @@ function formatEvent(row: typeof eventsTable.$inferSelect) {
     galLon: row.galLon,
     sunDistance: row.sunDistance,
     moonDistance: row.moonDistance,
-    latencyUs: String(row.latencyUs),
+    // bigint is serialised as a string; null must survive as null rather than
+    // becoming the string "null".
+    latencyUs: row.latencyUs != null ? String(row.latencyUs) : null,
     createdAt: row.createdAt.toISOString(),
     lifecycle: (row.lifecycle ?? "preliminary") as "preliminary" | "initial" | "update" | "confirmed",
     alertType: row.alertType ?? undefined,

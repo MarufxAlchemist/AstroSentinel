@@ -47,8 +47,8 @@ export interface AstroEvent {
   sunDistance: number | null;
   /** Angular distance from Moon (degrees) */
   moonDistance: number | null;
-  /** System latency in microseconds */
-  latencyUs: number;
+  /** MEASURED ingestion latency in microseconds, from detectionTime to receipt. null means UNKNOWN - the alert was never received live (e.g. an archive import), so there is no latency to report. Never a placeholder value. */
+  latencyUs: number | null;
   createdAt: string;
   /** Normalised alert lifecycle state */
   lifecycle: AstroEventLifecycle;

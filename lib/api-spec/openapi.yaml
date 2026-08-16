@@ -283,7 +283,12 @@ components:
             never a placeholder value.
         latencyUs:
           type: integer
-          description: System latency in microseconds
+          nullable: true
+          description: >-
+            MEASURED ingestion latency in microseconds, from detectionTime to
+            receipt. null means UNKNOWN - the alert was never received live
+            (e.g. an archive import), so there is no latency to report. Never
+            a placeholder value.
         createdAt:
           type: string
         lifecycle:

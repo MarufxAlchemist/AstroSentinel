@@ -104,7 +104,8 @@ interface RawEvent {
   errorRadius: number;
   snr: number;
   far: number;
-  latencyUs: number;
+  // MEASURED ingestion latency — null means UNKNOWN (never received live).
+  latencyUs: number | null;
   // DERIVED sky geometry — null means UNKNOWN, never a placeholder.
   galLon: number | null;
   galLat: number | null;
@@ -146,7 +147,7 @@ function toAstroEvent(raw: RawEvent): AstroEvent {
     errorRadius:        raw.errorRadius,
     snr:                raw.snr,
     far:                raw.far,
-    latencyUs:          raw.latencyUs,
+    latencyUs:          raw.latencyUs ?? null,
     galLon:             raw.galLon,
     galLat:             raw.galLat,
     sunDistance:        raw.sunDistance,

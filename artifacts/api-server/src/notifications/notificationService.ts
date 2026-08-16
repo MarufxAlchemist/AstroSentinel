@@ -414,7 +414,7 @@ export async function dispatchForEvent(
           t90:                event["t90"]                != null ? Number(event["t90"])                : null,
           chirpMass:          event["chirpMass"]          != null ? Number(event["chirpMass"])          : null,
           luminosityDistance: event["luminosityDistance"] != null ? Number(event["luminosityDistance"]) : null,
-          latencyUs:          Number(event["latencyUs"]          ?? 0),
+          latencyUs:          event["latencyUs"]          != null ? Number(event["latencyUs"])          : null,
         },
         notificationPriority,
       );

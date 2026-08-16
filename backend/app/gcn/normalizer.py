@@ -80,7 +80,7 @@ def normalize(topic: str, raw: dict[str, Any]) -> dict[str, Any]:
         "area90Deg2":    None,
         "snr":           None,
         "far":           None,
-        "latencyUs":     0,
+        "latencyUs":     None,
         "galLon":        None,
         "galLat":        None,
         "sunDistance":   None,
@@ -341,14 +341,20 @@ def _sun_moon_distance(
         return None, None
 
 
-def _latency_us(detection_time_iso: str) -> int:
-    """Microseconds from detection_time to now."""
+def _latency_us(detection_time_iso: str) -> int | None:
+    """
+    Microseconds from detection_time to now.
+
+    Returns None when the detection time cannot be parsed: without it there is
+    no latency to report, and 0 would claim the notice arrived at the instant
+    of detection. Absence is never zero.
+    """
     try:
         dt = datetime.fromisoformat(detection_time_iso.replace("Z", "+00:00"))
         now = datetime.now(timezone.utc)
         return max(0, int((now - dt).total_seconds() * 1_000_000))
     except Exception:
-        return 0
+        return None
 
 
 # ---------------------------------------------------------------------------

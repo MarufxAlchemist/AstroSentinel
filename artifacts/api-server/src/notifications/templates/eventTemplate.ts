@@ -130,7 +130,8 @@ export interface EventTemplateInput {
   dm?:                number | null;
 
   // Metadata
-  latencyUs:          number;
+  /** null = never received live (archive import); rendered as "N/A". */
+  latencyUs:          number | null;
 
   // Phase 5.4 correlation result
   correlationResult:  CorrelationResult;
