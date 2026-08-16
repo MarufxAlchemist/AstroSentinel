@@ -62,6 +62,10 @@ const PYTHON_BACKEND_URL =
 // Real observatory topics accepted through the Python → Kafka bridge.
 // Messages arriving on topics NOT in this set are silently ignored so that
 // any future Python-side additions don't accidentally pollute the DB.
+// This is a SECOND allow-list, independent of the Python topic subscription in
+// backend/app/gcn/topics.py. Both must be updated together: a topic added only
+// on the Python side is consumed, normalized, broadcast — and then silently
+// dropped here, which looks exactly like the alert never arriving at all.
 const ALLOWED_TOPICS = new Set([
   "igwn.gwalert",
   "gcn.notices.chime.frb",
@@ -69,6 +73,15 @@ const ALLOWED_TOPICS = new Set([
   "gcn.notices.icecube.gold_bronze_track_alerts",
   "gcn.notices.swift.bat.guano",
   "gcn.notices.einstein_probe.wxt.alert",
+  // Fermi GBM — the instrument that reports most GRBs. Four stages of the
+  // same trigger; they share a TrigID so later notices revise the event.
+  "gcn.classic.voevent.FERMI_GBM_ALERT",
+  "gcn.classic.voevent.FERMI_GBM_FLT_POS",
+  "gcn.classic.voevent.FERMI_GBM_GND_POS",
+  "gcn.classic.voevent.FERMI_GBM_FIN_POS",
+  // SVOM
+  "gcn.notices.svom.voevent.grm",
+  "gcn.notices.svom.voevent.eclairs",
 ]);
 
 // Reconnect back-off: 2 s → 4 s → 8 s → … → 60 s cap

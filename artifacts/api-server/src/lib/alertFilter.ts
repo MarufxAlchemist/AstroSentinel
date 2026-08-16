@@ -492,6 +492,61 @@ function filterGeneric(topic: string, payload: Record<string, unknown>): FilterV
   };
 }
 
+/**
+ * VOEvent GRB streams — Fermi GBM and SVOM.
+ *
+ * These arrive as XML and are flattened by the Python side into
+ * `raw._voevent_doc`, so the JSON-shaped filters above do not apply. Note that
+ * `filterFermi()` is unreachable: it keys on the topic prefix
+ * "gcn.notices.fermi", which does not exist on the broker — every Fermi stream
+ * is published under "gcn.classic.voevent.FERMI_GBM_*".
+ *
+ * The role / Test_Submission / Def_NOT_a_GRB checks are re-applied here rather
+ * than trusted from the Python side: this filter is the documented gate for
+ * what reaches the database, and it should not depend on an upstream service
+ * having already screened the message.
+ */
+function filterVoEventGrb(topic: string, payload: Record<string, unknown>): FilterVerdict {
+  const doc = safeObj(payload["_voevent_doc"]);
+  const params = safeObj(doc["params"]);
+
+  const role = safeStr(doc["role"]).toLowerCase();
+  if (role && role !== "observation") {
+    return reject(`VOEvent role=${role} is not an observation`, "test_trigger");
+  }
+  if (safeStr(params["Test_Submission"]).toLowerCase() === "true") {
+    return reject("VOEvent Test_Submission=true", "test_trigger");
+  }
+  if (safeStr(params["Def_NOT_a_GRB"]).toLowerCase() === "true") {
+    return reject(
+      "Flight software classified the trigger as not a GRB (Def_NOT_a_GRB=true)",
+      "not_astrophysical",
+    );
+  }
+
+  // Fermi re-issues one trigger as its position is refined, coarse to final.
+  // Mapping the stage onto the lifecycle lets the revision machinery treat
+  // later notices as updates rather than as new bursts.
+  let lifecycle: Lifecycle = "preliminary";
+  let alertType = "PRELIMINARY";
+  if (topic.endsWith("GND_POS")) {
+    lifecycle = "update";
+    alertType = "UPDATE";
+  } else if (topic.endsWith("FIN_POS")) {
+    lifecycle = "confirmed";
+    alertType = "FINAL";
+  }
+
+  let observatory = "Fermi (GBM)";
+  if (topic.includes("svom")) {
+    observatory = topic.includes("eclairs") ? "SVOM (ECLAIRs)" : "SVOM (GRM)";
+    lifecycle = "preliminary";
+    alertType = "PRELIMINARY";
+  }
+
+  return { action: "accept", lifecycle, alertType, classificationTier: null, observatory };
+}
+
 // ---------------------------------------------------------------------------
 // Top-level dispatcher
 // ---------------------------------------------------------------------------
@@ -528,6 +583,13 @@ export function applyAlertFilter(topic: string, payload: unknown): FilterVerdict
 
   if (topic.startsWith("gcn.notices.fermi")) {
     return filterFermi(p);
+  }
+
+  // VOEvent XML streams. Must be checked before the generic fallback, which
+  // would otherwise accept them with the raw topic string as the observatory.
+  if (topic.startsWith("gcn.classic.voevent.FERMI_GBM") ||
+      topic.startsWith("gcn.notices.svom.voevent")) {
+    return filterVoEventGrb(topic, p);
   }
 
   return filterGeneric(topic, p);

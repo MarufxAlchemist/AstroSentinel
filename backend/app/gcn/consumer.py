@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from gcn_kafka import Consumer
 
+from app.gcn import voevent
 from app.gcn.topics import TOPICS, get_topic_meta
 from app.gcn.normalizer import normalize
 from app.websocket.manager import manager, alert_buffer
@@ -135,7 +136,25 @@ async def process_alert(message) -> None:
         try:
             raw = json.loads(value)
         except json.JSONDecodeError:
-            raw = {"raw_text": value}
+            # Not JSON. The entire gcn.classic.* family — every Fermi GBM
+            # stream — is VOEvent XML, and SVOM publishes VOEvent too. This
+            # previously fell straight through to {"raw_text": ...}, so those
+            # notices normalized to an event with no position, time or
+            # significance and were effectively discarded.
+            if voevent.looks_like_voevent(value):
+                doc = voevent.parse(value)
+                if doc is None:
+                    print(f"[consumer] unparseable VOEvent on {topic}; skipped")
+                    return
+                if not voevent.is_observation(doc):
+                    # role=test/utility, Test_Submission, or a trigger the
+                    # flight software already attributed to a non-GRB source.
+                    print(f"[consumer] non-observation VOEvent on {topic} "
+                          f"(role={doc.get('role')}); skipped")
+                    return
+                raw = {"_voevent_doc": doc}
+            else:
+                raw = {"raw_text": value}
 
         meta  = get_topic_meta(topic)
         event = normalize(topic, raw)
