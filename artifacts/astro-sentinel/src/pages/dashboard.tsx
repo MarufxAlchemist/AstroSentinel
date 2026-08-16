@@ -6,6 +6,7 @@ import type { AstroEvent } from "@workspace/api-client-react/src/generated/api.s
 import { formatMicrosecondDate, formatLatency, formatMeasured, formatExp, formatDerived } from "@/lib/formatters";
 import { useScienceMode } from "@/lib/ScienceModeContext";
 import { SciencePanel } from "@/components/SciencePanel";
+import { ArchiveCoverage } from "@/components/ArchiveCoverage";
 
 function typeColor(type: string) {
   switch (type) {
@@ -383,6 +384,8 @@ export default function Dashboard() {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <StatsStrip />
+      {/* Counterweight to "Total: N" — how much of that total is actually measured. */}
+      <ArchiveCoverage events={allEvents} />
       <TimelineBar events={allEvents} />
       <div className="flex flex-1 overflow-hidden">
         <div className="w-52 shrink-0 border-r border-border flex flex-col overflow-hidden bg-[hsl(var(--sidebar))]">
