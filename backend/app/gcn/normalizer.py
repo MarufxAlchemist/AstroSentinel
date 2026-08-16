@@ -208,6 +208,57 @@ def _measured(val: Any) -> float | None:
     return f
 
 
+def _alias(raw: dict, *keys: str) -> Any:
+    """
+    First present, non-empty value among several candidate key spellings.
+
+    GCN payloads name the same quantity differently across schemas and schema
+    versions (ra_obj/ra, err_rad/loc_error, width_ms/width). The existing
+    parsers already handle this with nested raw.get() defaults; this makes the
+    pattern readable when there are more than two candidates.
+
+    NOTE ON THE ALIAS LISTS BELOW
+    ─────────────────────────────
+    They are best-effort and deliberately generous. A key that never appears in
+    a real payload simply never matches and the field stays UNKNOWN — the cost
+    of a wrong guess is zero, whereas a field that IS present and unlisted is
+    silently discarded, which is what this change exists to stop. The lists
+    should still be confirmed against live traffic per topic.
+    """
+    for k in keys:
+        if k in raw:
+            v = raw[k]
+            if v is not None and v != "":
+                return v
+    return None
+
+
+def _measured_alias(raw: dict, *keys: str) -> float | None:
+    """_measured() over a list of candidate keys."""
+    return _measured(_alias(raw, *keys))
+
+
+def _positive_alias(raw: dict, *keys: str) -> float | None:
+    """_positive_measured() over a list of candidate keys."""
+    return _positive_measured(_alias(raw, *keys))
+
+
+def _text_alias(raw: dict, *keys: str) -> str | None:
+    """
+    Non-empty string over a list of candidate keys.
+
+    Used for qualifiers that are NOT numbers and must never be coerced into
+    one — the fluence energy band, the neutrino energy unit, the event
+    topology. A missing qualifier stays None so the science layer can refuse
+    to derive rather than assume a default.
+    """
+    v = _alias(raw, *keys)
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
+
+
 def _positive_measured(val: Any) -> float | None:
     """
     _measured(), additionally rejecting non-positive values for quantities
@@ -361,6 +412,50 @@ def _latency_us(detection_time_iso: str) -> int | None:
 # Per-topic parsers
 # ---------------------------------------------------------------------------
 
+def _grb_spectral_fields(raw: dict) -> dict:
+    """
+    Temporal and spectral quantities the GRB rules consume, plus their errors.
+
+    Shared by every GRB-producing parser so the alias lists exist once.
+
+    WHAT THIS DOES NOT DO
+    ─────────────────────
+    It does not supply `fluenceBand` from the instrument's nominal bandpass.
+    Stamping "15-150 keV" onto a Swift fluence because Swift-BAT nominally
+    covers that range would be an assumption of exactly the kind the
+    containment-convention rules exist to prevent: the band is only known if
+    the notice states it, and a fluence integrated over a different interval
+    would silently produce a wrong E_iso. Unstated stays UNKNOWN, and
+    grb.validate() then declines to derive the isotropic energy and says why.
+
+    Nor does it supply `eisoBolometric`. That needs a k-correction from a
+    fitted spectral model (Zhang eq. 2.45); no notice carries one.
+    """
+    return {
+        # T90 > 0 by definition — a non-positive duration is not a measurement.
+        "t90":            _positive_alias(raw, "t90", "T90", "duration",
+                                          "burst_duration"),
+        "t90Error":       _positive_alias(raw, "t90_error", "t90_err",
+                                          "duration_error"),
+        # Observed peak energy of the nu-F-nu spectrum (keV).
+        "epeak":          _positive_alias(raw, "epeak", "e_peak", "ep",
+                                          "peak_energy", "epeak_kev"),
+        "epeakError":     _positive_alias(raw, "epeak_error", "epeak_err",
+                                          "peak_energy_error"),
+        "fluenceError":   _positive_alias(raw, "fluence_error", "fluence_err"),
+        # The energy interval the fluence was integrated over, as a string.
+        # Never inferred — see the docstring above.
+        "fluenceBand":    _text_alias(raw, "fluence_band", "energy_band",
+                                      "fluence_energy_range", "energy_range"),
+        # Redshift is almost never in a real-time notice; it arrives later by
+        # circular. Positive-only: a literal 0 here would be a placeholder, and
+        # z = 0 derives a zero luminosity distance and an E_iso of zero.
+        "redshift":       _positive_alias(raw, "redshift", "z", "host_redshift"),
+        "redshiftError":  _positive_alias(raw, "redshift_error", "redshift_err",
+                                          "z_error"),
+    }
+
+
 def _chime_frb(raw: dict, event_type: str) -> dict:
     """
     CHIME/FRB VOEvent-JSON schema.
@@ -387,6 +482,26 @@ def _chime_frb(raw: dict, event_type: str) -> dict:
         "moonDistance":  moon_d,
         "dm":            _measured(raw.get("dm")),
         "fluence":       None,
+        # ── Burst properties the FRB rules already validate ─────────────────
+        # frb.validate() has had range checks for pulse width, observing
+        # frequency and the DM decomposition since Phase 4, but the parser
+        # never populated them, so every check was dead code. width_ms is
+        # named in this parser's own docstring as a key field of the schema.
+        "widthMs":       _positive_alias(raw, "width_ms", "width", "boxcar_width_ms",
+                                         "pulse_width_ms"),
+        "frequencyMhz":  _positive_alias(raw, "centre_frequency", "center_frequency",
+                                         "frequency_mhz", "freq_mhz", "central_freq"),
+        "scatteringMs":  _positive_alias(raw, "scattering_time", "scattering_ms",
+                                         "scatter_time_ms"),
+        "dmError":       _positive_alias(raw, "dm_error", "dm_err", "dm_uncertainty"),
+        # Galactic DM foreground. Reported by the source or not at all: the
+        # extragalactic excess is only meaningful if this came from an
+        # electron-density model the notice names, never one assumed here.
+        "dmGalactic":    _positive_alias(raw, "dm_gal", "dm_mw", "galactic_dm",
+                                         "dm_galactic"),
+        "dmGalacticError": _positive_alias(raw, "dm_gal_error", "dm_mw_error",
+                                           "dm_galactic_error"),
+        "isRepeater":    _alias(raw, "is_repeater", "repeater", "known_repeater"),
     }
 
 
@@ -417,6 +532,7 @@ def _einstein_probe(raw: dict, event_type: str) -> dict:
         "moonDistance":  moon_d,
         "fluence":       _measured(raw.get("fluence")),
         "dm":            None,
+        **_grb_spectral_fields(raw),
     }
 
 
@@ -464,6 +580,16 @@ def _icecube(raw: dict, event_type: str) -> dict:
         "moonDistance":  moon_d,
         "fluence":       None,
         "dm":            None,
+        # ── Neutrino energy and topology ────────────────────────────────────
+        # The unit is carried as a STRING alongside the number and is never
+        # assumed: neutrino.py refuses to convert an energy whose unit it was
+        # not told (GeV/TeV/PeV differ by three orders of magnitude each).
+        "energy":        _positive_alias(raw, "energy", "reco_energy",
+                                         "neutrino_energy", "energy_gev"),
+        "energyUnit":    _text_alias(raw, "energy_unit", "energyUnits",
+                                     "energy_units"),
+        "eventTopology": _text_alias(raw, "event_topology", "topology",
+                                     "event_type_topology"),
     }
 
 
@@ -544,6 +670,27 @@ def _igwn(raw: dict, event_type: str) -> dict:
         "fluence":       None,
         "dm":            None,
         "fitsUrl":       fits_url,
+        # ── Binary parameters the GW rules consume ──────────────────────────
+        # Usually NOT in the JSON alert: LVK carries distance in the skymap
+        # FITS header (DISTMEAN/DISTSTD) and masses in the parameter-estimation
+        # products, both downstream of this notice. Extracted opportunistically
+        # so that a payload which does carry them is not discarded; absent
+        # stays UNKNOWN and gw.py declines the derivations that need them.
+        "chirpMass":     _positive_alias(
+            event_block, "chirp_mass", "mchirp", "chirp_mass_source") or
+            _positive_alias(raw, "chirp_mass", "mchirp"),
+        "mass1":         _positive_alias(event_block, "mass1", "mass_1") or
+                         _positive_alias(raw, "mass1", "mass_1"),
+        "mass2":         _positive_alias(event_block, "mass2", "mass_2") or
+                         _positive_alias(raw, "mass2", "mass_2"),
+        "mass1Error":    _positive_alias(event_block, "mass1_error", "mass_1_error"),
+        "mass2Error":    _positive_alias(event_block, "mass2_error", "mass_2_error"),
+        "luminosityDistance": _positive_alias(
+            event_block, "luminosity_distance", "distance", "distmean") or
+            _positive_alias(raw, "luminosity_distance", "distance", "distmean"),
+        "luminosityDistanceError": _positive_alias(
+            event_block, "luminosity_distance_error", "distance_error", "diststd") or
+            _positive_alias(raw, "luminosity_distance_error", "diststd"),
     }
 
 
@@ -575,6 +722,7 @@ def _swift_bat(raw: dict, event_type: str) -> dict:
         "moonDistance":  moon_d,
         "fluence":       _measured(raw.get("fluence")),
         "dm":            None,
+        **_grb_spectral_fields(raw),
     }
 
 
@@ -599,6 +747,9 @@ def _generic(raw: dict, event_type: str) -> dict:
         "galLat":        gal_lat,
         "sunDistance":   sun_d,
         "moonDistance":  moon_d,
-        "fluence":       None,
-        "dm":            None,
+        # The fallback parser previously discarded fluence outright, so any
+        # unrecognised GRB topic lost it even when the payload carried one.
+        "fluence":       _measured_alias(raw, "fluence", "burst_fluence"),
+        "dm":            _measured_alias(raw, "dm", "dispersion_measure"),
+        **_grb_spectral_fields(raw),
     }
