@@ -38,6 +38,8 @@ Collaboration features have backend routing wired but minimal frontend integrati
 | **Phase 5.5: Intelligent Notification Deduplication** | `src/notifications/deduplicationEngine/` (5 modules) |
 | **Phase 5.6: AI Scientific Summary Generation** | `src/science/summaryEngine/` (2 modules) |
 | **Phase 5.6: Correlation-Aware Scientific Notifications** | `src/notifications/templates/eventTemplate.ts` |
+| **WeChat channel (WeCom group robot)** — provider abstraction, AES-256-GCM credential storage, SSRF-pinned transport, config API, dispatcher with retry/rate-limit/idempotency, delivery history UI. See [WECHAT_NOTIFICATIONS.md](WECHAT_NOTIFICATIONS.md) | `artifacts/api-server/src/notifications/providers/`, `routes/notificationsWechat.ts` |
+| Test suite (vitest, 103 tests) + ESLint with `react-hooks/rules-of-hooks` | `artifacts/api-server/vitest.config.ts`, `artifacts/astro-sentinel/eslint.config.js` |
 
 ---
 
@@ -45,6 +47,8 @@ Collaboration features have backend routing wired but minimal frontend integrati
 
 | Feature | Status | Location |
 |---|---|---|
+| **WeChat end-to-end delivery to Tencent** | Every layer up to the HTTP boundary is built and tested, but **no message has reached WeCom's servers.** Needs a real robot webhook from the WeCom console — see [WECHAT_NOTIFICATIONS.md](WECHAT_NOTIFICATIONS.md). Treat as unproven in production until then. | `providers/wechat/` |
+| QQ channel | Deliberately not implemented. Tencent has no official API for messaging a personal QQ account from a third party; the group/channel bot route needs QQ Open Platform registration and review. The UI states the reason. | `WeComConfigPanel.tsx` |
 | External links (GCN, ALADIN, ESASky, TNS) | Non-functional UI stubs | Frontend components |
 | Telescope follow-up request UI | Backend schema complete, no frontend | `routes/team.ts` schema |
 | Event localization FITS map viewer | Schema complete, no UI | — |
