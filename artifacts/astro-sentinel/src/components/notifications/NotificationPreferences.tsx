@@ -121,6 +121,49 @@ export function NotificationPreferences() {
     if (prefs) setFormData(prefs);
   }, [prefs]);
 
+  // ── WeChat / WeCom channel state ──────────────────────────────────────────
+  //
+  // DECLARED HERE, ABOVE THE EARLY RETURNS, AND IT MUST STAY HERE.
+  // The loading / error / no-data guards below return before the rest of the
+  // component body runs. A hook placed after them is skipped on those renders
+  // and executed once data arrives, so React sees a different number of hooks
+  // between renders and throws "Rendered more hooks than during the previous
+  // render". Hooks must be unconditional; only the JSX below may be.
+  //
+  // Held separately from `formData` on purpose: preferences are a form the user
+  // edits and saves as a unit, whereas a webhook credential is submitted once,
+  // encrypted server-side and never returned. Keeping it in formData would
+  // invite it being round-tripped through a PUT of the whole form, which would
+  // require the secret to live in React state — exactly what must not happen.
+  const [wecom, setWecom] = useState<WeComConfigState>({
+    health: "configuration_required",
+  });
+
+  // `formData` is null until the query resolves, hence the optional chaining:
+  // this effect runs on every render, including the ones that bail out below.
+  const selectedChannels = formData?.channels.join(",") ?? "";
+
+  useEffect(() => {
+    if (!token) return;
+    if (!selectedChannels.split(",").includes("wechat")) return;
+    void (async () => {
+      try {
+        const res = await fetch("/api/notifications/wechat", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const j = await res.json();
+        setWecom({
+          display: j.display ?? null,
+          health: j.health ?? "configuration_required",
+          healthDetail: j.healthDetail,
+        });
+      } catch {
+        /* leave prior state; a status read failure must not clear the UI */
+      }
+    })();
+  }, [token, selectedChannels]);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -159,17 +202,7 @@ export function NotificationPreferences() {
     }
   };
 
-  // ── WeChat / WeCom channel state ──────────────────────────────────────────
-  //
-  // Held separately from `formData` on purpose. Preferences are a form the user
-  // edits and saves as a unit; a webhook credential is submitted once, encrypted
-  // server-side and never returned. Keeping it in the same object would invite
-  // it being round-tripped through a PUT of the whole form, and the secret
-  // would then have to exist in React state to be sent back — which is exactly
-  // what must not happen.
-  const [wecom, setWecom] = useState<WeComConfigState>({
-    health: "configuration_required",
-  });
+  // Plain functions, not hooks — safe to define after the early returns.
   const qqNoteVisible = formData.channels.includes("qq");
 
   const authHeaders = (): Record<string, string> => ({
@@ -192,11 +225,6 @@ export function NotificationPreferences() {
       /* leave prior state; a status read failure must not clear the UI */
     }
   }
-
-  useEffect(() => {
-    if (token && formData.channels.includes("wechat")) void refreshWeComStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, formData.channels.join(",")]);
 
   /** Returns a user-safe error string, or null on success. */
   async function handleWeComSave(webhookUrl: string): Promise<string | null> {
