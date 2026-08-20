@@ -28,7 +28,7 @@
  *
  * Extensibility
  * ─────────────
- *   Future channels (Telegram, Slack, Webhooks) add their own dispatch
+ *   Future channels (WeChat/WeCom, QQ, Webhooks) add their own dispatch
  *   call here without touching kafkaConsumer.ts or the email stack.
  *
  * Error handling
