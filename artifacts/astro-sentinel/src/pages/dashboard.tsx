@@ -97,6 +97,8 @@ function SidebarItem({ event, selected, isNew, onClick, scienceMode }: { event: 
   const tier          = (event as any).classificationTier as "GOLD" | "BRONZE" | undefined;
   const revisionCount = (event as any).revisionCount as number | undefined;
   const isHistorical  = (event as any).isHistorical  as boolean | undefined;
+  /** "TEST" / "NOT-A-GRB" mark a stored non-event — see the badges below. */
+  const alertType     = (event as any).alertType     as string | undefined;
   return (
     <div onClick={onClick} className={`flex items-center gap-2.5 px-2.5 cursor-pointer transition-all border-l-2 ${scienceMode ? "py-2.5" : "py-2"} ${selected ? `bg-primary/10 border-l-primary` : `border-l-transparent hover:bg-accent/50`} ${isNew ? "animate-in fade-in slide-in-from-top-2 duration-400" : ""}`}>
       <div className={`w-9 h-9 rounded-md border ${c.border} ${c.bg} flex items-center justify-center shrink-0`}>
@@ -107,6 +109,34 @@ function SidebarItem({ event, selected, isNew, onClick, scienceMode }: { event: 
         <div className={`text-[10px] ${c.text} truncate`}>{typeLabel(event.eventType)}</div>
         {/* Lifecycle + tier + historical + revision badges */}
         <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+          {/*
+            NON-EVENT MARKERS — rendered FIRST and in alarm colours, before the
+            lifecycle badge, because they change what the row IS rather than
+            how far along it is.
+
+            These only appear when GRB_ADMIT_TEST_TRIGGERS or
+            GRB_ADMIT_NON_ASTROPHYSICAL is enabled, which stores items that are
+            NOT astrophysical detections. NOT-A-GRB is the instrument's own
+            verdict that the trigger was a particle event, solar flare or known
+            source. Without this badge such a row is indistinguishable from a
+            real burst, and someone could schedule follow-up on a solar flare.
+          */}
+          {alertType === "NOT-A-GRB" && (
+            <span
+              title="The flight software classified this trigger as NOT a gamma-ray burst (Def_NOT_a_GRB). It is shown because non-astrophysical admission is enabled."
+              className="inline-flex items-center px-1.5 py-px text-[8px] font-mono font-bold rounded border bg-red-500/20 text-red-400 border-red-500/60 leading-none"
+            >
+              NOT-A-GRB
+            </span>
+          )}
+          {alertType === "TEST" && (
+            <span
+              title="Test packet from the observatory, not a real detection. Shown because test-trigger admission is enabled."
+              className="inline-flex items-center px-1.5 py-px text-[8px] font-mono font-bold rounded border bg-fuchsia-500/20 text-fuchsia-400 border-fuchsia-500/60 leading-none"
+            >
+              TEST
+            </span>
+          )}
           <span className={`inline-flex items-center px-1.5 py-px text-[8px] font-mono font-semibold rounded border ${lc.cls} leading-none`}>
             {lc.label}
           </span>

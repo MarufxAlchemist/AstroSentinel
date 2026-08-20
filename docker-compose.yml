@@ -167,6 +167,14 @@ services:
       ORCID_CLIENT_ID:      ${ORCID_CLIENT_ID}
       ORCID_CLIENT_SECRET:  ${ORCID_CLIENT_SECRET}
 
+      # ── GRB ingestion ───────────────────────────────────────────────────
+      GRB_SWIFT_MIN_IMAGE_SIGNIFICANCE: ${GRB_SWIFT_MIN_IMAGE_SIGNIFICANCE:-6.0}
+      GRB_EP_MIN_SNR:                   ${GRB_EP_MIN_SNR:-5.0}
+      # Store items that are NOT astrophysical detections. Admitted items are
+      # labelled TEST / NOT-A-GRB in the UI so they stay distinguishable.
+      GRB_ADMIT_TEST_TRIGGERS:          ${GRB_ADMIT_TEST_TRIGGERS:-false}
+      GRB_ADMIT_NON_ASTROPHYSICAL:      ${GRB_ADMIT_NON_ASTROPHYSICAL:-false}
+
       # ── Notification providers ──────────────────────────────────────────
       # Encrypts provider credentials (e.g. the WeCom robot webhook) at rest
       # in alerts.alert_subscriptions.channel_config. Without it the WeChat

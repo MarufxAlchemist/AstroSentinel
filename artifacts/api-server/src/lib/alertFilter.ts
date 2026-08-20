@@ -122,6 +122,28 @@ const SWIFT_MIN_IMAGE_SIGNIFICANCE = envFloat("GRB_SWIFT_MIN_IMAGE_SIGNIFICANCE"
  */
 const EP_MIN_SNR = envFloat("GRB_EP_MIN_SNR", 5.0);
 
+/**
+ * Admission of non-events, off by default.
+ *
+ * These are NOT quality thresholds. A TEST packet is not a burst, and a
+ * trigger the flight software has already attributed to a particle event,
+ * solar flare or known source is not an astrophysical detection. Enabling
+ * them puts things on the dashboard that are not GRBs.
+ *
+ * They exist because an operator may legitimately want to see the complete
+ * raw stream — to audit what the instrument is emitting, or to satisfy
+ * themselves nothing real is being discarded. Admitted items are always
+ * labelled (see filterVoEventGrb) so they remain distinguishable at a glance.
+ *
+ * Read per call rather than captured at import so the setting can be changed
+ * with a container restart and no rebuild.
+ */
+function envBool(name: string): boolean {
+  return (process.env[name] ?? "false").trim().toLowerCase() === "true";
+}
+const admitTestTriggers = () => envBool("GRB_ADMIT_TEST_TRIGGERS");
+const admitNonAstrophysical = () => envBool("GRB_ADMIT_NON_ASTROPHYSICAL");
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -542,13 +564,31 @@ function filterVoEventGrb(topic: string, payload: Record<string, unknown>): Filt
   const params = safeObj(doc["params"]);
 
   const role = safeStr(doc["role"]).toLowerCase();
-  if (role && role !== "observation") {
-    return reject(`VOEvent role=${role} is not an observation`, "test_trigger");
+  const isTest = (role && role !== "observation") ||
+                 safeStr(params["Test_Submission"]).toLowerCase() === "true";
+  const isNotAGrb = safeStr(params["Def_NOT_a_GRB"]).toLowerCase() === "true";
+
+  // ── Admission of non-events (GRB_ADMIT_* ) ────────────────────────────────
+  //
+  // Off by default. When enabled, a TEST packet or a trigger the flight
+  // software already attributed to a particle event, solar flare or known
+  // source is STORED rather than dropped — but it is stored LABELLED.
+  //
+  // The labelling is not optional and is the whole reason this is safe to
+  // offer. An admitted non-event that looked identical to a real burst would
+  // be worse than dropping it: someone could schedule follow-up on a solar
+  // flare. So each carries an explicit alertType (TEST / NOT-A-GRB) which the
+  // UI renders as its own badge, and its classificationTier is cleared so it
+  // can never be mistaken for a graded detection.
+  if (isTest && !admitTestTriggers()) {
+    return reject(
+      role && role !== "observation"
+        ? `VOEvent role=${role} is not an observation`
+        : "VOEvent Test_Submission=true",
+      "test_trigger",
+    );
   }
-  if (safeStr(params["Test_Submission"]).toLowerCase() === "true") {
-    return reject("VOEvent Test_Submission=true", "test_trigger");
-  }
-  if (safeStr(params["Def_NOT_a_GRB"]).toLowerCase() === "true") {
+  if (isNotAGrb && !admitNonAstrophysical()) {
     return reject(
       "Flight software classified the trigger as not a GRB (Def_NOT_a_GRB=true)",
       "not_astrophysical",
@@ -568,11 +608,18 @@ function filterVoEventGrb(topic: string, payload: Record<string, unknown>): Filt
     alertType = "FINAL";
   }
 
+  // The label overrides the stage: what this IS matters more than how far
+  // along its position refinement is. NOT-A-GRB wins over TEST because it is
+  // the stronger statement about the signal.
+  if (isNotAGrb) alertType = "NOT-A-GRB";
+  else if (isTest) alertType = "TEST";
+
   let observatory = "Fermi (GBM)";
   if (topic.includes("svom")) {
     observatory = topic.includes("eclairs") ? "SVOM (ECLAIRs)" : "SVOM (GRM)";
     lifecycle = "preliminary";
-    alertType = "PRELIMINARY";
+    // Do not let the SVOM branch overwrite a TEST / NOT-A-GRB label.
+    if (!isTest && !isNotAGrb) alertType = "PRELIMINARY";
   }
 
   return { action: "accept", lifecycle, alertType, classificationTier: null, observatory };
