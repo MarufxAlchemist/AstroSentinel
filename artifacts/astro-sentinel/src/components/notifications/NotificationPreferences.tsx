@@ -6,6 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/AuthContext";
 import { NotificationChannelCard } from "./NotificationChannelCard";
 import { WeComConfigPanel, QQUnavailableNote, type WeComConfigState } from "./WeComConfigPanel";
+import { DeliveryHistory } from "./DeliveryHistory";
 import { NotificationEventSelector } from "./NotificationEventSelector";
 import { NotificationPrioritySelector } from "./NotificationPrioritySelector";
 import { NotificationBehaviour } from "./NotificationBehaviour";
@@ -335,6 +336,10 @@ export function NotificationPreferences() {
         )}
         {qqNoteVisible && <QQUnavailableNote />}
       </section>
+
+      {/* Delivery history — makes a silent failure visible to the person
+          it affects, rather than only in a server log they cannot read. */}
+      <DeliveryHistory token={token} />
 
       {/* 3. Event Types */}
       <section className="space-y-4">

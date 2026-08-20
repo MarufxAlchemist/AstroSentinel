@@ -29,8 +29,8 @@
 
 import { Router } from "express";
 import type { Request, Response } from "express";
-import { and, eq } from "drizzle-orm";
-import { db, alertSubscriptions, labMembers } from "@workspace/db";
+import { and, desc, eq } from "drizzle-orm";
+import { db, alerts, alertSubscriptions, labMembers } from "@workspace/db";
 
 import { requireAuth, type AuthPayload } from "../middlewares/auth.js";
 import { logger } from "../lib/logger.js";
@@ -288,6 +288,85 @@ router.post("/notifications/wechat/test", requireAuth, async (req, res) => {
   } catch (err) {
     logger.error({ err: redactSecrets(String(err)) }, "[notifications/wechat] test failed");
     safeError(res, 500, "Could not send the test notification.");
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /notifications/deliveries — recent delivery history
+// ---------------------------------------------------------------------------
+
+/**
+ * What actually happened to this user's notifications.
+ *
+ * The point of surfacing this is that "I didn't get an alert" and "no alert was
+ * sent" are indistinguishable from the outside. A researcher needs to be able
+ * to tell a quiet sky from a broken webhook.
+ *
+ * Scoped to the caller's own subscriptions. error_message is included because
+ * it is the actionable part ("the webhook was deleted in WeCom") — it has
+ * already been redacted at write time by the dispatcher, and is redacted again
+ * here, since a row could predate that guarantee.
+ */
+router.get("/notifications/deliveries", requireAuth, async (req, res) => {
+  try {
+    const { userId } = actorOf(req);
+    const member = await resolveActorLab(userId);
+    if (!member) return safeError(res, 403, "Not a lab member.");
+
+    const limit = Math.min(Number(req.query["limit"] ?? 25) || 25, 100);
+
+    // Join through the subscription so a caller only ever sees deliveries for
+    // subscriptions they own — scoping on alerts.lab_id alone would expose
+    // every colleague's deliveries within the same lab.
+    const rows = await db
+      .select({
+        id: alerts.id,
+        channel: alerts.channel,
+        provider: alerts.provider,
+        status: alerts.status,
+        retryCount: alerts.retryCount,
+        failureKind: alerts.failureKind,
+        errorCode: alerts.errorCode,
+        errorMessage: alerts.errorMessage,
+        sentAt: alerts.sentAt,
+        nextRetryAt: alerts.nextRetryAt,
+        createdAt: alerts.createdAt,
+        payload: alerts.payload,
+      })
+      .from(alerts)
+      .innerJoin(alertSubscriptions, eq(alerts.subscriptionId, alertSubscriptions.id))
+      .where(and(
+        eq(alertSubscriptions.userId, userId as any),
+        eq(alertSubscriptions.labId, member.labId as any),
+      ))
+      .orderBy(desc(alerts.createdAt))
+      .limit(limit);
+
+    res.json({
+      deliveries: rows.map((r) => {
+        const p = (r.payload ?? {}) as Record<string, unknown>;
+        return {
+          id: String(r.id),
+          eventId: String(p["eventId"] ?? ""),
+          eventType: String((p["event"] as any)?.eventType ?? ""),
+          priority: String(p["priority"] ?? ""),
+          revisionCount: Number(p["revisionCount"] ?? 0),
+          channel: r.channel,
+          provider: r.provider,
+          status: r.status,
+          attempts: r.retryCount ?? 0,
+          failureKind: r.failureKind,
+          errorCode: r.errorCode,
+          error: r.errorMessage ? redactSecrets(r.errorMessage) : null,
+          sentAt: r.sentAt?.toISOString() ?? null,
+          nextRetryAt: r.nextRetryAt?.toISOString() ?? null,
+          createdAt: r.createdAt.toISOString(),
+        };
+      }),
+    });
+  } catch (err) {
+    logger.error({ err }, "[notifications/deliveries] GET failed");
+    safeError(res, 500, "Could not read the delivery history.");
   }
 });
 
