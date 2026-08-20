@@ -366,14 +366,24 @@ export default function Dashboard() {
   const liveIds = useMemo(() => new Set(Array.isArray(liveEvents) ? liveEvents.map(e => e.id) : []), [liveEvents]);
   const SIDEBAR_LIMIT = 50;
 
-  // Display-only filter — does not affect DB or allEvents state.
-  // INITIAL and UPDATE are intermediate notices; the sidebar shows only the
-  // first (PRELIMINARY) and final (CONFIRMED) state of each event.
-  const VISIBLE_LIFECYCLES = new Set(["preliminary", "confirmed"]);
+  // NO LIFECYCLE FILTER — and this must not be reintroduced.
+  //
+  // This previously kept only {preliminary, confirmed}, on the assumption that
+  // INITIAL and UPDATE were separate intermediate rows worth collapsing. They
+  // are not: revisions of one burst share a trigger ID and are UPSERTED into a
+  // single row whose `lifecycle` column changes as the position is refined.
+  //
+  // So the filter was not hiding duplicates — it was hiding BURSTS. A Fermi
+  // trigger that has received a ground-recalculated position sits at
+  // lifecycle="update" and disappeared from the live feed entirely, until a
+  // final notice arrived, which may be many minutes later or never. Exactly
+  // the events a researcher is watching for were the ones removed.
+  //
+  // Every event is now listed, and the per-item badge shows which stage it is
+  // at. The revision count is on the card, so a refined burst is visibly a
+  // revision rather than a new one.
   const sidebarEvents = useMemo(
-    () => allEvents
-      .filter(e => VISIBLE_LIFECYCLES.has((e as any).lifecycle ?? "preliminary"))
-      .slice(0, SIDEBAR_LIMIT),
+    () => allEvents.slice(0, SIDEBAR_LIMIT),
     [allEvents],
   );
   React.useEffect(() => {

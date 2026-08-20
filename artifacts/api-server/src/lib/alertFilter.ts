@@ -80,16 +80,47 @@ const CHIME_MIN_DM = 5.0;
 const CHIME_MIN_SNR = 8.0;
 
 /**
- * Swift BAT image significance minimum (σ).
- * BAT uses 6.5σ as the canonical detection threshold; we use 6σ to be inclusive.
+ * GRB quality thresholds, overridable at runtime.
+ *
+ * WHY THESE ARE CONFIGURABLE AND NOT DELETED
+ * ──────────────────────────────────────────
+ * Measured against the live broker, these gates were rejecting NOTHING:
+ * 8 GRB notices received, 8 accepted, 0 rejected. They are not the reason a
+ * burst fails to appear — the dashboard's lifecycle filter was.
+ *
+ * They are made configurable so the ceiling can be opened deliberately and
+ * reversibly, rather than removed. Setting them to 0 admits everything the
+ * instrument reports, INCLUDING sub-threshold triggers that are usually
+ * detector noise. That is a legitimate choice for someone who would rather
+ * sift noise than miss a marginal burst — but it should be a choice, made
+ * once and visible in the environment, not a silent code edit.
+ *
+ * The test-trigger, retraction and Def_NOT_a_GRB rejections are NOT
+ * configurable. Those are not quality thresholds: a TEST packet is not a
+ * burst, and a trigger the flight software already attributed to a particle
+ * event or a solar flare is not an astrophysical detection. Admitting them
+ * would put non-events on the dashboard as bursts.
  */
-const SWIFT_MIN_IMAGE_SIGNIFICANCE = 6.0;
+function envFloat(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number.parseFloat(raw);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+/**
+ * Swift BAT image significance minimum (σ).
+ * BAT uses 6.5σ as the canonical detection threshold; 6σ is already inclusive.
+ * Set GRB_SWIFT_MIN_IMAGE_SIGNIFICANCE=0 to accept every Swift trigger.
+ */
+const SWIFT_MIN_IMAGE_SIGNIFICANCE = envFloat("GRB_SWIFT_MIN_IMAGE_SIGNIFICANCE", 6.0);
 
 /**
  * Einstein Probe WXT SNR minimum.
  * Calibration events and noise produce SNR < 5.
+ * Set GRB_EP_MIN_SNR=0 to accept every Einstein Probe alert.
  */
-const EP_MIN_SNR = 5.0;
+const EP_MIN_SNR = envFloat("GRB_EP_MIN_SNR", 5.0);
 
 // ---------------------------------------------------------------------------
 // Internal helpers
