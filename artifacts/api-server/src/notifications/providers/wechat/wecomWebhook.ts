@@ -121,14 +121,23 @@ function classify(errcode: number): {
 // Configuration
 // ---------------------------------------------------------------------------
 
-export interface WeComConfig {
+/**
+ * Declared as a TYPE ALIAS, not an interface, on purpose.
+ *
+ * This is persisted into the `channel_config` jsonb column, whose Drizzle type
+ * is Record<string, unknown>. TypeScript gives object type aliases an implicit
+ * index signature but does NOT give one to interfaces, so an interface here
+ * fails to assign and invites an `as any` at the call site — which is the
+ * documented technical debt this project is trying to shed.
+ */
+export type WeComConfig = {
   /** Encrypted webhook URL (v1:…). Never plaintext once stored. */
   webhookUrl: string;
   /** Redacted form, safe to return from the API. */
   display?: string;
   /** "markdown" (default) or "text". */
   format?: "markdown" | "text";
-}
+};
 
 /**
  * Byte-aware truncation that never splits a UTF-8 codepoint.

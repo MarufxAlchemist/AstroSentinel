@@ -8,6 +8,7 @@ import discussionsRouter from "./discussions";
 import bookmarksRouter from "./bookmarks";
 import filterReportRouter from "./filterReport";
 import notificationsRouter from "./notifications";
+import notificationsWechatRouter from "./notificationsWechat";
 
 const router: IRouter = Router();
 
@@ -20,5 +21,6 @@ router.use(discussionsRouter);
 router.use(bookmarksRouter);
 router.use(filterReportRouter);
 router.use(notificationsRouter);
+router.use(notificationsWechatRouter);
 
 export default router;
