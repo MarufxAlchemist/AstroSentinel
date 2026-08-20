@@ -9,6 +9,7 @@ import { setWebSocketServer } from "./lib/eventBroadcaster";
 import { startIngestion } from "./lib/eventIngestion";
 import { startKafkaConsumer } from "./lib/kafkaConsumer";
 import { runBootstrap } from "./lib/bootstrap";
+import { startDispatcher } from "./notifications/notificationDispatcher";
 
 const rawPort = process.env["PORT"];
 
@@ -86,6 +87,15 @@ server.listen(port, () => {
   // ── SIMULATOR (no-op) ────────────────────────────────────────────────────
   // startIngestion() is kept here for import compatibility but does nothing.
   startIngestion();
+
+  // ── NOTIFICATION DELIVERY LOOP ───────────────────────────────────────────
+  // Sends queued provider-channel deliveries and picks up scheduled retries.
+  //
+  // Started before the Kafka consumer on purpose: deliveries are rows in
+  // alerts.alerts, so anything left mid-backoff by a restart or a crash is
+  // resumed here rather than lost. An alert that vanishes because a container
+  // was redeployed is exactly the alert someone needed.
+  startDispatcher();
 
   // ── BOOTSTRAP SEED ───────────────────────────────────────────────────────
   // Inserts up to 10 historical events from recent_events.json only when
