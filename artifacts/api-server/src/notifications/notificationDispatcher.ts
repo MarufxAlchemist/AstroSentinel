@@ -43,79 +43,16 @@ import type {
   NotificationPayload,
   NotificationProvider,
 } from "./providers/types.js";
+import { subscriptionWants, toPriority, type Priority } from "./notificationPolicy.js";
+
+// Re-exported so callers and tests have one import site for the policy.
+export { subscriptionWants, toPriority };
+export type { Priority };
 
 /** Channels with a working transport. A channel appears here only when it can deliver. */
 const PROVIDERS: Partial<Record<NotificationChannel, NotificationProvider>> = {
   wechat: wecomProvider,
 };
-
-type Priority = "CRITICAL" | "HIGH" | "NORMAL" | "LOW";
-
-const PRIORITY_RANK: Record<Priority, number> = {
-  CRITICAL: 3, HIGH: 2, NORMAL: 1, LOW: 0,
-};
-
-/** Maps the P0–P3 vocabulary of the priority engine onto provider priorities. */
-export function toPriority(level: string): Priority {
-  switch (level.toUpperCase()) {
-    case "P0": return "CRITICAL";
-    case "P1": return "HIGH";
-    case "P2": return "NORMAL";
-    default:   return "LOW";
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Policy
-// ---------------------------------------------------------------------------
-
-/**
- * Does this subscription want this event?
- *
- * Deliberately explicit rather than clever: each rule is one readable
- * condition, because a filtering bug here is silent — the user simply never
- * hears about a burst and has no way to tell that from "no burst happened".
- */
-export function subscriptionWants(
-  sub: {
-    eventTypes: string[];
-    observatories: string[];
-    priorityLevel: string;
-    lifecyclePolicy: Record<string, boolean | "significant_only"> | null;
-    isActive: boolean;
-  },
-  ev: { eventType: string; observatory: string; lifecycle: string; isRetraction: boolean },
-  priority: Priority,
-): { wanted: boolean; reason?: string } {
-  if (!sub.isActive) return { wanted: false, reason: "subscription inactive" };
-
-  // A retraction always goes through. Someone acting on the original alert —
-  // pointing a telescope, filing a circular — must be told it was withdrawn,
-  // regardless of every other filter.
-  if (ev.isRetraction) return { wanted: true };
-
-  if (sub.eventTypes.length && !sub.eventTypes.includes(ev.eventType)) {
-    return { wanted: false, reason: `event type ${ev.eventType} not subscribed` };
-  }
-  if (sub.observatories.length && !sub.observatories.includes(ev.observatory)) {
-    return { wanted: false, reason: `observatory ${ev.observatory} not subscribed` };
-  }
-
-  const threshold = sub.priorityLevel === "critical_only" ? PRIORITY_RANK.CRITICAL
-                  : sub.priorityLevel === "critical_and_high" ? PRIORITY_RANK.HIGH
-                  : PRIORITY_RANK.LOW;
-  if (PRIORITY_RANK[priority] < threshold) {
-    return { wanted: false, reason: `priority ${priority} below ${sub.priorityLevel}` };
-  }
-
-  const policy = sub.lifecyclePolicy ?? {};
-  const rule = policy[ev.lifecycle.toLowerCase()];
-  if (rule === false) return { wanted: false, reason: `lifecycle ${ev.lifecycle} disabled` };
-  // "significant_only" is already satisfied: the deduplication engine gates
-  // this call and only forwards revisions it judged meaningful. Re-deciding it
-  // here would be a second implementation of that rule, free to disagree.
-  return { wanted: true };
-}
 
 // ---------------------------------------------------------------------------
 // Enqueue
